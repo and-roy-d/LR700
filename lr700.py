@@ -4,61 +4,62 @@ Created on Augest 15, 2009
 @author: bennett
 '''
 
-import gpib_instrument
-from lookup import Lookup
-from time import sleep
 
-class LR700(gpib_instrument.Gpib_Instrument):
-    '''
-    The LR700 AC Bridge GPIB communication class (Incomplete)
-    '''
+'''
+Created on Mar 3, 2009
 
+@author: schimaf
+@version: 1.0.0
+'''
 
-    def __init__(self, pad, board_number = 0, name = '', sad = 0, timeout = 17, send_eoi = 1, eos_mode = 0):
-        '''
-        Constructor  The PAD (Primary GPIB Address) is the only required parameter
-        '''
+#import time
 
-        super(LR700, self).__init__(board_number, name, pad, sad, timeout, send_eoi, eos_mode)
-        
-        # GPIB identity string of the instrument
-        self.id_string = "Needtolookup"
-        
-        self.manufacturer = 'Linear Research'
-        self.model_number = '700'
-        self.description  = 'AC Resistance Bridge'
-        
-        #self.compare_identity()
+import pyvisa
+import time
 
-        
-    def GetResistance(self):
-        '''
-        Get resistance from a given channel as a float
-        '''
-        
-        commandstring = 'GET 0'
-        result = self.ask(commandstring)
+_rm = pyvisa.ResourceManager()
+_inst = _rm.open_resource('GPIB0::16::INSTR')
 
 
-        valuestrings = result.split()
-	#print valuestrings
-        if valuestrings[2] is not 'R':
-            print 'Error in read - Did not retuen a R'
-        value = float(valuestrings[0])
-        units = valuestrings[1]
+class LR700Exception(Exception):
+    pass
 
-        if units == 'KOHM':
-            multiplier = 1e3
-        elif units == 'OHM':
-            multiplier = 1
-        elif units == 'MOHM':
-            multiplier = 1e-3
-        elif units == 'UOHM':
-            multiplier = 1e-6
-        else:
-            multiplier = 1
-            print 'Error - No Matching Units'
 
-        resistance = value * multiplier
-        
-        return resistance
+def read_ohm():
+    for i in range(10000):
+        try:
+            return _read_ohm()
+        except LR700Exception:
+            time.sleep(0.001)
+            continue
+    
+    return None
+
+def _read_ohm():
+    _inst.write("GET 0", termination="\n")
+    result = _inst.read()
+    valuestrings = result.split()
+    # print(f"{result=} {valuestrings=}")
+    if len(valuestrings) < 3:
+        raise LR700Exception("too short valuestrings")
+    if valuestrings[2] != 'R':
+        raise LR700Exception("no R found")
+    value = float(valuestrings[0])
+    units = valuestrings[1]
+
+    if units == 'KOHM':
+        multiplier = 1e3
+    elif units == 'OHM':
+        multiplier = 1
+    elif units == 'MOHM':
+        multiplier = 1e-3
+    elif units == 'UOHM':
+        multiplier = 1e-6
+    else:
+        raise LR700Exception("bad multipler")
+
+
+    resistance = value * multiplier
+    
+    return resistance
+
