@@ -1,6 +1,2 @@
-*.png
-*.csv
-*.npy
-*.pyc
-*.txt
-*.zip
+/Data
+/__pycache__

@@ -300,7 +300,7 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
                     ax.axvline(row['Tc_mK'], color='r', ls='--', alpha=0.4)
                     ax.text(row['Tc_mK'], row['R_mOhm'],
                             f"{row['Tc_mK']:.1f}",
-                            fontsize=12, color='k', ha='right', va='bottom', rotation=0)
+                            fontsize=12, color=color, ha='right', va='bottom', rotation=0)
 
             if seen_labels:
                 ax.legend(loc='best', fontsize=12)
