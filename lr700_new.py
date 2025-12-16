@@ -60,11 +60,7 @@ def _read_value(channel, value_type):
             raise LR700Exception("Expected R unit in GET 0 response")
         value_str, unit_str = valuestrings[0], valuestrings[1]
 
-    # For GET 1 (channel=1), expect: VALUE UNIT X
     else:
-        # Sometimes the device might return multiple values,
-        # but since you say GET 1 is X only, parse first 3 tokens.
-        # Defensive: check if 3 tokens exist and unit is 'X'
         if valuestrings[2] != 'X':
             raise LR700Exception("Expected X unit in GET 1 response")
         value_str, unit_str = valuestrings[0], valuestrings[1]

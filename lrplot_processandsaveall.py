@@ -6,17 +6,9 @@ from scipy.ndimage import gaussian_filter1d
 import pandas as pd
 import os, shutil, re, time
 
-# -------------------------------
-# Plot style
-# -------------------------------
 plt.rcParams['font.sans-serif'] = ['Arial']
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 14
-
-
-# -------------------------------
-# Helper functions (Unchanged)
-# -------------------------------
 
 def estimate_local_trend_savgol(data, window=101, poly=2):
     if len(data) < 5:
@@ -82,29 +74,23 @@ def find_all_transitions_hybrid(T_K, R_mOhm, *, prominence=1.0, min_step_mOhm=5.
 
     edge_buffer = len(R) * 0.05
 
-    # FIX: Iterate with index 'i' to access properties directly
     for i, p in enumerate(peaks):
         # A. Filter: Ignore edges
         if p < edge_buffer or p > (len(R) - edge_buffer):
             continue
 
-        # B. Define Transition Width
-        # Now we can safely access left_ips using the index 'i'
         w_low = int(properties['left_ips'][i])
         w_high = int(properties['right_ips'][i])
 
-        # Expand slightly to get to the flat plateau
         bottom = max(0, w_low - 5)
         top = min(len(R) - 1, w_high + 5)
 
-        # C. Validate Step Size
         R_sc = np.median(R[max(0, bottom - 10):bottom + 1])
         R_n = np.median(R[top:min(len(R), top + 11)])
 
         step = R_n - R_sc
         width_mK = abs(T_mK[top] - T_mK[bottom])
 
-        # D. Final Threshold Checks
         if step < min_step_mOhm:
             continue
         if width_mK > max_width_mK:
@@ -117,10 +103,6 @@ def find_all_transitions_hybrid(T_K, R_mOhm, *, prominence=1.0, min_step_mOhm=5.
 
     return transitions
 
-
-# -------------------------------
-# File organization (Unchanged)
-# -------------------------------
 
 def organize_files_by_device(parent, device_labels, wait=0.2):
     parent = pathlib.Path(parent)
@@ -146,10 +128,6 @@ def organize_files_by_device(parent, device_labels, wait=0.2):
             pass
 
 
-# -------------------------------
-# Main processing
-# -------------------------------
-
 def process_all_data(parent_folder, *, device_labels, apply_correction=True,
                      analyze_transition=True, save_plots=True,
                      prominence=30, min_step_mOhm=15, max_width_mK=30):
@@ -169,8 +147,6 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
         for npy in dev_dir.glob('*.npy'):
             print(f'Processing {npy.relative_to(parent)}')
             data = np.load(npy, allow_pickle=True)
-
-            # 2. Determine Ramp Direction (Must be done BEFORE creating base_data)
             t_raw = data['t_K']
             # If end temp > start temp, it's an UP ramp
             if len(t_raw) > 1 and t_raw[-1] > t_raw[0]:
@@ -244,9 +220,6 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
                 fig.savefig(npy.with_suffix('.png'), dpi=300)
                 plt.close(fig)
 
-    # -------------------------------
-    # Summary plot
-    # -------------------------------
     if not summary_rows:
         print("No data files found at all.")
         return
@@ -260,9 +233,6 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 4.5), dpi=300)
 
-    # Add Subtitle
-    # Note: 'date' must be passed in or defined in scope, assume global or add to args if needed
-    # Using a generic title if date isn't available in local scope
     try:
         fig.suptitle(f"Transition Summary - {date}", fontsize=24, y=0.99)
     except NameError:
@@ -325,7 +295,6 @@ if __name__ == "__main__":
     date_obj = datetime.strptime(date, "%Y%m%d")
     ruox_change_date = datetime.strptime("20250821", "%Y%m%d")
 
-    # Update this path to your actual path
     data_parent_folder = pathlib.Path(f'C:\\Users\\trxuser\\Desktop\\Python\\Instruments\\btfc\\Data\\{date}\\')
     filament_widths = "6, 8, 10, 20"
 
