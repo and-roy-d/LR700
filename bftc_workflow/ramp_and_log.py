@@ -1,9 +1,18 @@
 import time
 import csv
 from datetime import datetime
+from pathlib import Path
+import sys
 import tqdm
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import bftc
-from lr700_new import read_value
 from ramp_heater import get_latest_heater_power_uW
 
 # --- Ramp Down Function ---
@@ -29,6 +38,8 @@ def ramp_down_and_log(
 
             base_temp = bftc.read_scepter_temperature()
             try:
+                from lr700_new import read_value
+
                 r = read_value(channel=0, value_type='R')
                 x = read_value(channel=1, value_type='X')
 

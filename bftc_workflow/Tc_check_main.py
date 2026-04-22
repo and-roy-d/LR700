@@ -1,5 +1,15 @@
 import threading
 import time
+from pathlib import Path
+import sys
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import bftc
 import ramp_heater
 import data_logger

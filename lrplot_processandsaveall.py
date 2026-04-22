@@ -290,13 +290,13 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 if __name__ == "__main__":
     from datetime import datetime
 
-    date = "20251215"
+    date = "20260420"
     ruox_installed = False
     date_obj = datetime.strptime(date, "%Y%m%d")
     ruox_change_date = datetime.strptime("20250821", "%Y%m%d")
 
-    data_parent_folder = pathlib.Path(f'C:\\Users\\trxuser\\Desktop\\Python\\Instruments\\btfc\\Data\\{date}\\')
-    filament_widths = "6, 8, 10, 20"
+    data_parent_folder = pathlib.Path(f'Data\\{date}\\')
+    filament_widths = " 8, 10, 20"
 
     device_label_map_myriad_nominal = {
         'A1': f'A1: Au1 top: {filament_widths}', 'A2': 'A2: Tracer 20A 0,2 0fil z073',
@@ -316,7 +316,16 @@ if __name__ == "__main__":
         'F2': 'F1: Tracer 20A 0,1 0fil z073', 'F1': f'F2: Au1 top: {filament_widths}',
     }
 
-    device_label_map = device_label_map_myriad_reversed
+    device_label_map_kpac_nominal = {
+        'A1': f'AA24: Au1 top: {filament_widths}', 'A2': 'A2: Tracer 20A 0,2 0fil z073',
+        'B1': 'B1: Tracer20A 0,0 0fil z073', 'B2': f'B2: Au1 middle: {filament_widths}',
+        'C1': f'C1: AA24 center: {filament_widths}', 'C2': f'C2: Au1 outer: {filament_widths}',
+        'D1': f'D1: AA24 outer: {filament_widths}', 'D2': f'D2: Au1 inner: {filament_widths}',
+        'E1': f'E1: AA25 0,0: Au1 (20 um), Au1Au2: {filament_widths}', 'E2': 'E2: Tracer 20A 0,3 0fil z073',
+        'F1': f'F1: AA25 0,3: Au1 (20 um), Au1Au2: {filament_widths}', 'F2': f'F2: Au1 top: {filament_widths}',
+    }
+
+    device_label_map = device_label_map_kpac_nominal
 
     if ruox_installed and (date_obj > ruox_change_date):
         device_label_map['E2'] = 'E2: RuOx U09874'

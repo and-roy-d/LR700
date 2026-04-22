@@ -1,5 +1,14 @@
+from pathlib import Path
+import sys
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import bftc
-import lr700
 import datetime
 import os
 import time
@@ -10,6 +19,8 @@ import ramp_heater
 def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
              target_temp=None, direction=None):
     print(f"Starting data logging every {logging_interval_s} second(s) from {temp_source}... Press Ctrl+C to stop.")
+    import lr700
+
     try:
         npaa = NpyAppendArray(filename)
     except Exception as e:
@@ -86,7 +97,9 @@ def main(save_dir, device_name, temp_source_choice, logging_interval_s=1,
          stop_event=None, target_temp=None, direction=None):
 
     if not save_dir:
-        save_dir = os.path.join("Data", datetime.datetime.now().strftime("%Y%m%d"))
+        save_dir = ROOT_DIR / "Data" / datetime.datetime.now().strftime("%Y%m%d")
+    else:
+        save_dir = Path(save_dir)
     if not os.path.exists(save_dir):
         print(f"Creating directory: {save_dir}")
         os.makedirs(save_dir)
@@ -97,14 +110,14 @@ def main(save_dir, device_name, temp_source_choice, logging_interval_s=1,
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     base_filename = "lr700log"
     if device_name:
-        filename = os.path.join(save_dir, f"{base_filename}_{device_name}_{temp_source_choice}_{timestamp}.npy")
+        filename = save_dir / f"{base_filename}_{device_name}_{temp_source_choice}_{timestamp}.npy"
     else:
-        filename = os.path.join(save_dir, f"{base_filename}_{temp_source_choice}_{timestamp}.npy")
+        filename = save_dir / f"{base_filename}_{temp_source_choice}_{timestamp}.npy"
 
     print(f"Data will be saved to: {filename}")
 
     try:
-        log_data(temp_source_choice, filename, logging_interval_s,
+        log_data(temp_source_choice, str(filename), logging_interval_s,
                  stop_event, target_temp, direction)
     except Exception as e:
         print(f"Data logger stopped due to error: {e}")

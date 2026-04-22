@@ -153,7 +153,7 @@ def run_dash_app():
             print(f"Warning: Error finding or loading data: {e}. Skipping update.")
             return go.Figure(), go.Figure(), go.Figure(), go.Figure()
 
-    app.run_server(debug=False)
+    app.run(debug=False)
 
 
 if __name__ == '__main__':
