@@ -47,13 +47,14 @@ def log_data(
     ls370_port: str = DEFAULT_LS370_PORT,
     ls370_channel: int = DEFAULT_LS370_CHANNEL,
     ls370_baudrate: int = DEFAULT_LS370_BAUDRATE,
+    lr700_adapter: str = 'prologix',
     lr700_port: str = DEFAULT_LR700_PORT,
     lr700_gpib_address: int = DEFAULT_LR700_GPIB_ADDRESS,
     lr700_auto: int = DEFAULT_LR700_AUTO,
 ) -> None:
     print(
         "Starting Lake Shore/LR700 logging "
-        f"(LS370 {ls370_port} ch{ls370_channel}, LR700 {lr700_port} GPIB {lr700_gpib_address})..."
+        f"(LS370 {ls370_port} ch{ls370_channel}, LR700 Adapter: {lr700_adapter})..."
     )
 
     try:
@@ -62,20 +63,36 @@ def log_data(
         print(f"Error initializing NpyAppendArray: {exc}")
         return
 
+    from contextlib import ExitStack
+    import lr700 as pyvisa_lr700
+
     try:
-        with LakeShore370(port=ls370_port, baudrate=ls370_baudrate) as ls370, PrologixLR700(
-            port=lr700_port,
-            gpib_address=lr700_gpib_address,
-            auto=lr700_auto,
-        ) as lr700:
+        with ExitStack() as stack:
+            ls370 = stack.enter_context(LakeShore370(port=ls370_port, baudrate=ls370_baudrate))
+            prologix_bridge = None
+            if lr700_adapter == 'prologix':
+                prologix_bridge = stack.enter_context(PrologixLR700(
+                    port=lr700_port,
+                    gpib_address=lr700_gpib_address,
+                    auto=lr700_auto,
+                ))
+            else:
+                pyvisa_lr700.init_gpib(lr700_gpib_address)
+
             while True:
                 if stop_event is not None and stop_event.is_set():
                     print("Stop event detected. Stopping data logging and closing file.")
                     break
 
                 try:
-                    r = lr700.read_r().value_ohms
-                    x = lr700.read_x().value_ohms
+                    if lr700_adapter == 'prologix':
+                        r = prologix_bridge.read_r().value_ohms
+                        x = prologix_bridge.read_x().value_ohms
+                    else:
+                        r_val = pyvisa_lr700.read_ohm(lr700_gpib_address)
+                        r = r_val if r_val is not None else np.nan
+                        x = np.nan
+
                     t = ls370.temperature_kelvin(ls370_channel)
                     current_time = time.time()
 
@@ -110,6 +127,7 @@ def main(
     ls370_port: str = DEFAULT_LS370_PORT,
     ls370_channel: int = DEFAULT_LS370_CHANNEL,
     ls370_baudrate: int = DEFAULT_LS370_BAUDRATE,
+    lr700_adapter: str = 'prologix',
     lr700_port: str = DEFAULT_LR700_PORT,
     lr700_gpib_address: int = DEFAULT_LR700_GPIB_ADDRESS,
     lr700_auto: int = DEFAULT_LR700_AUTO,
@@ -138,6 +156,7 @@ def main(
         ls370_port=ls370_port,
         ls370_channel=ls370_channel,
         ls370_baudrate=ls370_baudrate,
+        lr700_adapter=lr700_adapter,
         lr700_port=lr700_port,
         lr700_gpib_address=lr700_gpib_address,
         lr700_auto=lr700_auto,

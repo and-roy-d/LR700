@@ -12,6 +12,7 @@ dependencies = [
     "plotly>=6.3.1",
     "pyserial>=3.5",
     "pytz>=2026.1",
+    "pyvisa>=1.16.2",
     "requests>=2.32.5",
     "scipy>=1.16.3",
     "scipy-stubs~=1.17.1",

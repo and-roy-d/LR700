@@ -128,7 +128,7 @@ def main():
         [sys.executable, str(THIS_DIR / "dash_app.py")],
         cwd=str(ROOT_DIR),
     )
-    print(f"Lake Shore plotter started on http://127.0.0.1:8050/ (PID {dash_process.pid})")
+    print(f"Lake Shore plotter started on http://127.0.0.1:8051/ (PID {dash_process.pid})")
 
     print("Type 'exit' to stop data logging. The live plotter will continue until you close it.")
     while True:
