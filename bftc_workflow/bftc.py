@@ -1,11 +1,16 @@
+import os
 import requests
 import numpy as np
 import time
 from datetime import datetime, timedelta, timezone
 
+# Bypass system proxy for direct instrument connections
+os.environ.setdefault("NO_PROXY", "169.169.10.10,132.163.157.220,localhost,127.0.0.1")
+
 # this should clearly be a class that can take an IP as an argument, but it was faster this way
 
-ip = "132.163.157.220:5001"
+# ip = "132.163.157.220:5001"
+ip = "169.169.10.10:5001"
 
 def set_setpoint(temp_K, thermometer = 'scepter'):
     if thermometer == 'scepter':
@@ -142,11 +147,11 @@ def turn_off(ch):
     return response.json()
 
 def turn_off_all_but_mxc():
-    for ch in [1,2,5,7,8]:
+    for ch in [1, 2, 5]:
         turn_off(ch)
 
 def turn_off_all_but_scepter():
-    for ch in [1,2,5,6,8]:
+    for ch in [1, 2, 6]:
         turn_off(ch)
 
 def turn_on(ch):
@@ -156,23 +161,44 @@ def turn_on(ch):
     return response.json()
 
 def turn_on_all():
-    for ch in [1, 2, 5, 6, 7, 8]:
+    for ch in [1, 2, 5, 6]:
         turn_on(ch)
 
 
-def read_mxc_temperature():
-    response = requests.get(f"http://{ip}/channel/measurement/latest",
-                            timeout=10)
-    data = response.json()
-    assert data["channel_nr"]==6
-    return data["temperature"]
+def _read_latest_temperature(expected_channel, timeout_s=60, poll_interval=2):
+    """Poll /channel/measurement/latest until the expected channel appears.
 
-def read_scepter_temperature():
-    response = requests.get(f"http://{ip}/channel/measurement/latest",
-                            timeout=10)
-    data = response.json()
-    assert data["channel_nr"]==7
-    return data["temperature"]
+    When multiple channels are active the controller cycles through them
+    (~11 s per full cycle).  This waits up to *timeout_s* seconds for the
+    right channel to come back.
+    """
+    deadline = time.time() + timeout_s
+    while True:
+        response = requests.get(f"http://{ip}/channel/measurement/latest",
+                                timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("channel_nr") == expected_channel:
+            return data["temperature"]
+        if time.time() >= deadline:
+            raise TimeoutError(
+                f"Timed out waiting for channel {expected_channel} "
+                f"(last saw channel {data.get('channel_nr')})"
+            )
+        time.sleep(poll_interval)
+
+
+def read_channel_temperature(channel, **kwargs):
+    """Read the latest temperature for an arbitrary channel number."""
+    return _read_latest_temperature(channel, **kwargs)
+
+
+def read_mxc_temperature(**kwargs):
+    return _read_latest_temperature(6, **kwargs)
+
+
+def read_scepter_temperature(**kwargs):
+    return _read_latest_temperature(7, **kwargs)
 
 def mypid(setpoint_mK, I=0.3, P=2, breakout_err_mK = 0.1,power_uW_start=0):
     t_mK = read_mxc_temperature()*1000

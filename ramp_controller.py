@@ -55,14 +55,14 @@ class RampController:
             if 'bf_ip' in kwargs:
                 bftc.ip = kwargs['bf_ip']
             
-            # Map channel integer to 'scepter' or 'mxc' for the legacy logger logic, or just pass it if the logger was updated. 
-            # The logger uses 'scepter' or 'mxc' explicitly.
+            # Pass the channel number directly — the logger handles int channels
+            # via get_temp_history(ch=...)
             ch = kwargs.get('bf_source', 6)
             try:
                 ch = int(ch)
             except:
                 pass
-            source_choice = 'mxc' if ch == 6 else 'scepter'
+            source_choice = str(ch)
 
             self.log_thread = threading.Thread(
                 target=bf_logger.main,
@@ -70,7 +70,10 @@ class RampController:
                     "save_dir": save_dir, "device_name": prefix,
                     "temp_source_choice": source_choice,
                     "logging_interval_s": interval,
-                    "stop_event": self.log_stop_event
+                    "stop_event": self.log_stop_event,
+                    "lr700_adapter": kwargs.get('lr700_adapter', 'prologix'),
+                    "lr700_port": kwargs.get('lr700_port', 'COM14'),
+                    "lr700_gpib": kwargs.get('lr700_gpib', 17),
                 },
                 daemon=True
             )
@@ -104,7 +107,7 @@ class RampController:
     def check_connection(self, instrument, **kwargs):
         res_parts = []
         lr700_adapter = kwargs.get('lr700_adapter', 'prologix')
-        lr700_port = kwargs.get('lr700_port', 'COM3')
+        lr700_port = kwargs.get('lr700_port', 'COM14')
         lr700_gpib = kwargs.get('lr700_gpib', 17)
 
         # 1. Check LR700
@@ -112,12 +115,12 @@ class RampController:
             if lr700_adapter == 'prologix':
                 with PrologixLR700(port=lr700_port, gpib_address=lr700_gpib) as lr:
                     r = lr.read_r().value_ohms
-                    res_parts.append(f"LR700: {r*1000:.2f} mΩ.")
+                    res_parts.append(f"LR700: {r*1000:.2f} mOhm.")
             else:
                 import lr700 as pyvisa_lr700
                 r = pyvisa_lr700.read_ohm(lr700_gpib)
                 if r is not None:
-                    res_parts.append(f"LR700: {r*1000:.2f} mΩ.")
+                    res_parts.append(f"LR700: {r*1000:.2f} mOhm.")
                 else:
                     res_parts.append("LR700: Failed.")
         except Exception as e:

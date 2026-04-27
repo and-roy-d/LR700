@@ -87,7 +87,7 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
                     entry = np.array([(r, t, power_uW, current_time)],
                                      dtype=[('r_ohm', 'f8'), ('t_K', 'f8'), ('p_uW', 'f8'), ('time_s', 'f8')])
 
-                    print(f"R: {r*1000:.2f} mΩ, T: {t*1000:.2f} mK, P: {power_uW:.2f} µW, Time: {current_time:.2f}s")
+                    print(f"R: {r*1000:.2f} mOhm, T: {t*1000:.2f} mK, P: {power_uW:.2f} uW, Time: {current_time:.2f}s")
                     npaa.append(entry)
 
                     if target_temp is not None and direction in ('up', 'down'):

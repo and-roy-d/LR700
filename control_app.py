@@ -1,13 +1,16 @@
 import dash
-from dash import dcc, html, Input, Output, State, callback_context
+from dash import dcc, html, Input, Output, State, callback_context, no_update
 import plotly.graph_objects as go
 import numpy as np
 import pathlib
 import os
+import sys
 import datetime
 import pytz
 
 from ramp_controller import controller
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "bftc_workflow"))
+import bftc
 
 # Define available data columns for the custom plot
 DATA_COLUMNS = [
@@ -156,7 +159,7 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
                     style={"color": "#000"}
                 )
             ]),
-            html.Div(className="input-group", children=[html.Label("COM Port"), dcc.Input(id='lr700-port', type='text', value='COM3')]),
+            html.Div(className="input-group", children=[html.Label("COM Port"), dcc.Input(id='lr700-port', type='text', value='COM14')]),
             html.Div(className="input-group", children=[html.Label("GPIB Address"), dcc.Input(id='lr700-gpib', type='number', value=17)]),
         ]),
 
@@ -184,13 +187,22 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
         # Bluefors Settings
         html.Div(id='bluefors-settings', className="card", children=[
             html.H3("Bluefors Settings"),
-            html.Div(className="input-group", children=[html.Label("IP Address"), dcc.Input(id='bf-ip', type='text', value='132.163.157.220:5001')]),
+            html.Div(className="input-group", children=[html.Label("IP Address"), dcc.Input(id='bf-ip', type='text', value='169.169.10.10:5001')]),
             html.Div(className="input-group", children=[
                 html.Label("Thermometer Source (Channel)"),
                 dcc.Dropdown(id='bf-source', 
-                             options=[{'label': f'Channel {i}', 'value': i} for i in range(1, 7)], 
+                             options=[{'label': f'Channel {i}', 'value': i} for i in [1, 2, 5, 6]], 
                              value=6, 
                              clearable=False, style={"color":"#000"})
+            ]),
+            html.Div(style={"marginTop": "8px"}, children=[
+                dcc.Checklist(
+                    id='bf-solo-channel',
+                    options=[{'label': ' Solo selected channel (turn off others)', 'value': 'solo'}],
+                    value=[],
+                    style={"color": "#f8fafc", "fontSize": "0.85em"}
+                ),
+                html.Div(id='bf-solo-status', style={"marginTop": "4px", "color": "#f59e0b", "fontSize": "0.8em"})
             ]),
             html.Div(className="input-group", children=[html.Label("Target Temp (mK)"), dcc.Input(id='bf-target', type='number', value=10)]),
             html.Div(className="input-group", children=[html.Label("Initial Power (uW)"), dcc.Input(id='bf-init-power', type='number', value=0)]),
@@ -304,6 +316,36 @@ def toggle_logging_settings(checkbox_val):
     return 'card hidden'
 
 @app.callback(
+    Output('bf-solo-status', 'children'),
+    [Input('bf-solo-channel', 'value')],
+    [State('bf-source', 'value'), State('bf-ip', 'value')],
+    prevent_initial_call=True
+)
+def toggle_solo_channel(solo_val, bf_source, bf_ip):
+    """Turn off all channels except the selected one, or restore all."""
+    print(f"[Solo CB] solo_val={solo_val!r}, bf_source={bf_source!r}, bf_ip={bf_ip!r}")
+    try:
+        bftc.ip = bf_ip
+        bf_source = int(bf_source)
+        if solo_val and 'solo' in solo_val:
+            all_channels = [1, 2, 5, 6]
+            for ch in all_channels:
+                if ch != bf_source:
+                    print(f"  Turning OFF ch {ch}")
+                    bftc.turn_off(ch)
+                else:
+                    print(f"  Turning ON  ch {ch}")
+                    bftc.turn_on(ch)
+            return f"Solo CH {bf_source} — others disabled"
+        else:
+            print("  Restoring all channels")
+            bftc.turn_on_all()
+            return "All channels re-enabled"
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return f"Error: {e}"
+
+@app.callback(
     Output('conn-status-text', 'children'),
     Input('btn-test-conn', 'n_clicks'),
     [State('instrument-dropdown', 'value'),
@@ -313,11 +355,18 @@ def toggle_logging_settings(checkbox_val):
     prevent_initial_call=True
 )
 def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate, ls_channel, lr700_adapter, lr700_port, lr700_gpib):
-    return controller.check_connection(
-        instrument, bf_source=bf_source, bf_ip=bf_ip, 
-        ls_port=ls_port, ls_baudrate=ls_baudrate, ls_channel=ls_channel,
-        lr700_adapter=lr700_adapter, lr700_port=lr700_port, lr700_gpib=lr700_gpib
-    )
+    print(f"[Test Conn] instrument={instrument}, bf_ip={bf_ip}, bf_source={bf_source}, lr700_port={lr700_port}, lr700_adapter={lr700_adapter}")
+    try:
+        result = controller.check_connection(
+            instrument, bf_source=bf_source, bf_ip=bf_ip, 
+            ls_port=ls_port, ls_baudrate=ls_baudrate, ls_channel=ls_channel,
+            lr700_adapter=lr700_adapter, lr700_port=lr700_port, lr700_gpib=lr700_gpib
+        )
+        print(f"[Test Conn] result: {result}")
+        return result
+    except Exception as e:
+        print(f"[Test Conn] ERROR: {e}")
+        return f"Error: {e}"
 
 @app.callback(
     [Output('status-state', 'children'),
