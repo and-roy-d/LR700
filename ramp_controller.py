@@ -150,8 +150,16 @@ class RampController:
         return " | ".join(res_parts)
 
     def start_bluefors(self, bf_ip, source, target_temp, init_power, step, sleep_time, timeout, max_power):
-        if self.state in ["RAMPING", "PAUSED"]:
-            return False, "Already running"
+        if self.state == "RAMPING":
+            return False, "Already ramping — pause first to change parameters"
+        
+        # If paused, stop the old ramp thread gracefully (don't zero heater)
+        if self.state == "PAUSED":
+            self.stop_event.set()
+            self.pause_event.clear()
+            if self.thread and self.thread.is_alive():
+                self.thread.join(timeout=3)
+            self.message = "Restarting with new parameters..."
 
         bftc.ip = bf_ip
         self.instrument = "Bluefors"
@@ -344,6 +352,18 @@ class RampController:
             self.message = f"LakeShore error: {e}"
         finally:
             self._ls_bridge = None
+
+    def get_current_heater_power(self):
+        """Read the current heater power from BFTC, returns value in Watts or None."""
+        try:
+            pwr = bftc.get_heaterpower(ch=4, start_minutes_ago=2, stop_minutes_ago=0)
+            powers = pwr.get("measurements", {}).get("power", [])
+            if powers:
+                return powers[-1]  # latest power in Watts
+            return None
+        except Exception as e:
+            print(f"Error reading heater power: {e}")
+            return None
 
     def get_status(self):
         return {

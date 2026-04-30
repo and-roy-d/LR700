@@ -205,7 +205,19 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
                 html.Div(id='bf-solo-status', style={"marginTop": "4px", "color": "#f59e0b", "fontSize": "0.8em"})
             ]),
             html.Div(className="input-group", children=[html.Label("Target Temp (mK)"), dcc.Input(id='bf-target', type='number', value=10)]),
-            html.Div(className="input-group", children=[html.Label("Initial Power (uW)"), dcc.Input(id='bf-init-power', type='number', value=0)]),
+            html.Div(className="input-group", children=[
+                html.Label("Initial Power (uW)"), 
+                dcc.Input(id='bf-init-power', type='number', value=0),
+                html.Div(style={"marginTop": "4px"}, children=[
+                    dcc.Checklist(
+                        id='bf-use-current-power',
+                        options=[{'label': ' Use current heater power', 'value': 'use'}],
+                        value=['use'],
+                        style={"color": "#f8fafc", "fontSize": "0.82em"}
+                    ),
+                    html.Div(id='bf-current-power-status', style={"marginTop": "2px", "color": "#f59e0b", "fontSize": "0.78em"})
+                ])
+            ]),
             html.Div(className="input-group", children=[html.Label("Power Step (uW)"), dcc.Input(id='bf-step', type='number', value=10)]),
             html.Div(className="input-group", children=[html.Label("Step Delay (s)"), dcc.Input(id='bf-delay', type='number', value=10)]),
             html.Div(className="input-group", children=[html.Label("Max Power Limit (uW)"), dcc.Input(id='bf-max-power', type='number', value=500)]),
@@ -346,6 +358,30 @@ def toggle_solo_channel(solo_val, bf_source, bf_ip):
         return f"Error: {e}"
 
 @app.callback(
+    [Output('bf-init-power', 'value'),
+     Output('bf-current-power-status', 'children')],
+    [Input('bf-use-current-power', 'value')],
+    [State('bf-ip', 'value')],
+    prevent_initial_call=True
+)
+def use_current_power(checkbox_val, bf_ip):
+    """Read current heater power from BFTC and fill in the Initial Power field."""
+    if checkbox_val and 'use' in checkbox_val:
+        try:
+            if bf_ip:
+                bftc.ip = bf_ip
+            power_W = controller.get_current_heater_power()
+            if power_W is not None:
+                power_uW = round(power_W * 1e6, 2)
+                return power_uW, f"Read {power_uW} uW from heater"
+            else:
+                return no_update, "No heater data (heater may be off)"
+        except Exception as e:
+            return no_update, f"Error: {e}"
+    # Unchecked — leave field alone, clear status
+    return no_update, ""
+
+@app.callback(
     Output('conn-status-text', 'children'),
     Input('btn-test-conn', 'n_clicks'),
     [State('instrument-dropdown', 'value'),
@@ -374,7 +410,9 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      Output('status-temp', 'children'),
      Output('status-power', 'children'),
      Output('btn-pause', 'children'),
-     Output('log-status-text', 'children')],
+     Output('log-status-text', 'children'),
+     Output('bf-init-power', 'value', allow_duplicate=True),
+     Output('bf-current-power-status', 'children', allow_duplicate=True)],
     [Input('btn-start', 'n_clicks'),
      Input('btn-pause', 'n_clicks'),
      Input('btn-stop', 'n_clicks'),
@@ -387,13 +425,18 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-channel', 'value'), 
      State('ls-setpoint', 'value'), State('ls-rate', 'value'),
      State('lr700-adapter', 'value'), State('lr700-port', 'value'), State('lr700-gpib', 'value'),
-     State('log-dir', 'value'), State('log-prefix', 'value'), State('log-interval', 'value')]
+     State('log-dir', 'value'), State('log-prefix', 'value'), State('log-interval', 'value'),
+     State('bf-use-current-power', 'value')],
+    prevent_initial_call=True
 )
 def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int, 
                     instrument, bf_ip, bf_source, bf_target, bf_init, bf_step, bf_delay, bf_timeout, bf_max,
                     ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate,
                     lr700_adapter, lr700_port, lr700_gpib,
-                    log_dir, log_prefix, log_interval):
+                    log_dir, log_prefix, log_interval, use_current_power):
+    
+    init_power_update = no_update
+    power_status_update = no_update
     
     ctx = callback_context
     if ctx.triggered:
@@ -401,7 +444,22 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
         
         if trigger_id == 'btn-start':
             if instrument == 'Bluefors':
-                controller.start_bluefors(bf_ip, bf_source, bf_target*1e-3, bf_init*1e-6, bf_step*1e-6, bf_delay, bf_timeout, bf_max*1e-6)
+                # If "Use current power" is checked, read live power right now
+                actual_init = bf_init
+                if use_current_power and 'use' in use_current_power:
+                    try:
+                        if bf_ip:
+                            bftc.ip = bf_ip
+                        power_W = controller.get_current_heater_power()
+                        if power_W is not None:
+                            actual_init = round(power_W * 1e6, 2)
+                            init_power_update = actual_init
+                            power_status_update = f"Starting at {actual_init} uW (read from heater)"
+                        else:
+                            power_status_update = "No heater data — using manual value"
+                    except Exception as e:
+                        power_status_update = f"Read failed — using manual value: {e}"
+                controller.start_bluefors(bf_ip, bf_source, bf_target*1e-3, actual_init*1e-6, bf_step*1e-6, bf_delay, bf_timeout, bf_max*1e-6)
             else:
                 controller.start_lakeshore(ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate)
                 
@@ -441,7 +499,7 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
     pause_btn_text = "Resume" if status['state'] == "PAUSED" else "Pause"
     log_status_text = controller.log_message
     
-    return status['state'], status['message'], temp_str, power_str, pause_btn_text, log_status_text
+    return status['state'], status['message'], temp_str, power_str, pause_btn_text, log_status_text, init_power_update, power_status_update
 
 def fetch_latest_data():
     try:
@@ -459,7 +517,7 @@ def fetch_latest_data():
 
 def get_plot_color_array(num_points):
     num_highlight = min(5, num_points)
-    plot_color = '#3b82f6' # Blue
+    plot_color = '#eab308' # Yellow
     current_color = '#ef4444' # Red
     return [plot_color] * (num_points - num_highlight) + [current_color] * num_highlight
 
@@ -489,27 +547,100 @@ def get_axis_title(axis_key):
     Output('plot-custom', 'figure'),
     [Input('interval-data', 'n_intervals'),
      Input('custom-x', 'value'),
-     Input('custom-y', 'value')]
+     Input('custom-y', 'value')],
+    [State('bf-source', 'value'),
+     State('bf-ip', 'value')]
 )
-def update_plots(n, x_key, y_key):
-    data = fetch_latest_data()
-    if data is None:
-        return go.Figure(layout={"template":"plotly_dark", "plot_bgcolor":"#1e293b", "paper_bgcolor":"#1e293b"})
+def update_plots(n, x_key, y_key, bf_source, bf_ip):
+    # --- Determine status ---
+    ramp_state = controller.state
+    log_state = controller.log_state
+    if ramp_state in ("RAMPING", "PAUSED", "ERROR"):
+        status_text = ramp_state
+    elif log_state == "LOGGING":
+        status_text = "LOGGING"
+    else:
+        status_text = "IDLE"
 
-    num_points = len(data["time_s"])
-    colors = get_plot_color_array(num_points)
+    status_colors = {
+        "IDLE": "#94a3b8", "LOGGING": "#eab308",
+        "RAMPING": "#22c55e", "PAUSED": "#f59e0b", "ERROR": "#ef4444",
+    }
 
-    # Custom Plot
-    x_data = process_axis_data(data, x_key)
-    y_data = process_axis_data(data, y_key)
-    
-    fig_custom = go.Figure()
-    fig_custom.add_trace(go.Scatter(
-        x=x_data, y=y_data, mode='markers',
-        marker=dict(size=4, color=colors)
-    ))
-    fig_custom.update_layout(
-        margin=dict(l=50, r=20, t=20, b=50),
+    # --- Gather data ---
+    data = None
+    colors = 'white'
+
+    if log_state == "LOGGING":
+        # Show saved file data in yellow / red
+        data = fetch_latest_data()
+        if data is not None:
+            num_points = len(data["time_s"])
+            colors = get_plot_color_array(num_points)
+    else:
+        # Live mode: pull last 30 min of BFTC history (no logging needed)
+        try:
+            if bf_ip:
+                bftc.ip = bf_ip
+            ch = int(bf_source) if bf_source else 6
+            temp_result = bftc.get_temp_history(
+                ch=ch, start_minutes_ago=30, stop_minutes_ago=0
+            )
+            timestamps = temp_result.get("measurements", {}).get("timestamp", [])
+            temps = temp_result.get("measurements", {}).get("temperature", [])
+
+            if timestamps and temps:
+                # BFTC clock is off by years — shift timestamps to real time
+                # by comparing real time.time() with the latest BFTC timestamp
+                import time as _time
+                shift = _time.time() - timestamps[-1]
+                adj_ts = [ts + shift for ts in timestamps]
+
+                n_pts = len(adj_ts)
+                p_arr = np.zeros(n_pts)
+
+                # Try to get heater power history too
+                try:
+                    pwr = bftc.get_heaterpower(
+                        ch=4, start_minutes_ago=30, stop_minutes_ago=0
+                    )
+                    p_ts = pwr.get("measurements", {}).get("timestamp", [])
+                    p_vals = pwr.get("measurements", {}).get("power", [])
+                    if p_ts and p_vals:
+                        p_ts_adj = [t + shift for t in p_ts]
+                        p_uW = [p * 1e6 for p in p_vals]
+                        p_arr = np.interp(adj_ts, p_ts_adj, p_uW)
+                except Exception:
+                    pass
+
+                data = {
+                    "time_s": np.array(adj_ts),
+                    "t_K": np.array(temps),
+                    "r_ohm": np.zeros(n_pts),
+                    "p_uW": p_arr,
+                }
+                colors = 'white'
+        except Exception:
+            pass
+
+    # --- Build figure ---
+    fig = go.Figure()
+
+    if data is not None:
+        x_data = process_axis_data(data, x_key)
+        y_data = process_axis_data(data, y_key)
+        fig.add_trace(go.Scatter(
+            x=x_data, y=y_data, mode='markers',
+            marker=dict(size=4, color=colors)
+        ))
+
+    fig.update_layout(
+        title=dict(
+            text=status_text,
+            font=dict(size=22, color=status_colors.get(status_text, "#94a3b8")),
+            x=0.5, xanchor='center',
+        ),
+        margin=dict(l=50, r=20, t=50, b=50),
         xaxis_title=get_axis_title(x_key),
         yaxis_title=get_axis_title(y_key),
         template="plotly_dark",
@@ -519,7 +650,7 @@ def update_plots(n, x_key, y_key):
     )
 
     if x_key == 'time_local':
-        fig_custom.update_xaxes(tickformatstops=[
+        fig.update_xaxes(tickformatstops=[
             dict(dtickrange=[None, 1000], value="%H:%M:%S.%L"),
             dict(dtickrange=[1000, 60000], value="%H:%M:%S"),
             dict(dtickrange=[60000, 3600000], value="%H:%M"),
@@ -527,7 +658,7 @@ def update_plots(n, x_key, y_key):
             dict(dtickrange=[86400000, None], value="%Y-%m-%d")
         ])
 
-    return fig_custom
+    return fig
 
 
 if __name__ == '__main__':
