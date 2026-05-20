@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
 DEFAULT_LR700_PORT = "COM14" if sys.platform.startswith("win") else "/dev/ttyUSB0"
 
 import bftc
+import csv
 import datetime
 import os
 import time
@@ -27,6 +28,13 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
     except Exception as e:
         print(f"Error initializing NpyAppendArray: {e}")
         return
+
+    # Open a parallel CSV file with the same stem
+    csv_path = Path(filename).with_suffix(".csv")
+    csv_file = open(csv_path, "a", newline="", encoding="utf-8")
+    csv_writer = csv.writer(csv_file)
+    if csv_path.stat().st_size == 0:
+        csv_writer.writerow(["time_s", "t_K", "r_ohm", "p_uW"])
 
     from contextlib import ExitStack
     import lr700 as pyvisa_lr700
@@ -91,6 +99,8 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
 
                     print(f"R: {r*1000:.2f} mOhm, T: {t*1000:.2f} mK, P: {power_uW:.2f} uW, Time: {current_time:.2f}s")
                     npaa.append(entry)
+                    csv_writer.writerow([current_time, t, r, power_uW])
+                    csv_file.flush()
 
                     if target_temp is not None and direction in ('up', 'down'):
                         if direction == 'up' and t >= target_temp:
@@ -114,6 +124,7 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
                     time.sleep(logging_interval_s * 2)
     finally:
         npaa.close()
+        csv_file.close()
 
 
 def main(save_dir, device_name, temp_source_choice, logging_interval_s=1,
