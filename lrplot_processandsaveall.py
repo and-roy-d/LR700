@@ -128,7 +128,7 @@ def organize_files_by_device(parent, device_labels, wait=0.2):
             pass
 
 
-def process_all_data(parent_folder, *, device_labels, apply_correction=True,
+def process_all_data(parent_folder, *, device_labels, date_label=None, apply_correction=True,
                      analyze_transition=True, save_plots=True,
                      prominence=30, min_step_mOhm=15, max_width_mK=30):
     parent = pathlib.Path(parent_folder)
@@ -233,10 +233,10 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 4.5), dpi=300)
 
-    try:
-        fig.suptitle(f"Transition Summary - {date}", fontsize=24, y=0.99)
-    except NameError:
-        fig.suptitle(f"Transition Summary", fontsize=16, y=0.99)
+    if date_label:
+        fig.suptitle(f"Transition Summary - {date_label}", fontsize=24, y=0.99)
+    else:
+        fig.suptitle("Transition Summary", fontsize=16, y=0.99)
 
     axes = np.atleast_1d(axes).flatten()
 
@@ -283,14 +283,15 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.92)
-    fig.savefig(parent / f'{date}_Summary_R_vs_T.png', dpi=300)
+    summary_name = f'{date_label}_Summary_R_vs_T.png' if date_label else 'Summary_R_vs_T.png'
+    fig.savefig(parent / summary_name, dpi=300)
     print('Summary plot saved')
 
 
 if __name__ == "__main__":
     from datetime import datetime
 
-    date = "20260420"
+    date = "20260430"
     ruox_installed = False
     date_obj = datetime.strptime(date, "%Y%m%d")
     ruox_change_date = datetime.strptime("20250821", "%Y%m%d")
@@ -325,10 +326,23 @@ if __name__ == "__main__":
         'F1': f'F1: AA25 0,3: Au1 (20 um), Au1Au2: {filament_widths}', 'F2': f'F2: Au1 top: {filament_widths}',
     }
 
-    device_label_map = device_label_map_kpac_nominal
+    # Board A = suffix 1, Board B = suffix 2
+    device_label_map_20260430 = {
+        'A1': 'A1: Tracer 20A: 20 um',
+        'B1': 'B1: Tracer 22 Au1: 20,10,8',
+        'C1': 'C1: Tracer 22 Au1Au2: 20,10,8',
+        'D1': 'D1: Tracer 23 20 um: Au1, Au2, Au3',
+        'E1': 'E1: Tracer 23 30 um: Au1, Au2, Au3',
+        'F1': 'F1: Tracer 23 40 um: Au1, Au2, Au3',
+        'A2': 'A2: Tracer 23 50 um: Au1, Au2, Au3',
+        'B2': 'B2: Tracer 23 20 um: Au etch',
+        'C2': 'C2: Tracer 23 30 um: Au etch',
+        'D2': 'D2: Tracer 23 40 um: Au etch',
+        'E2': 'E2: RuOx',
+        'F2': 'F2: Tracer 23 50 um: Au etch',
+    }
 
-    if ruox_installed and (date_obj > ruox_change_date):
-        device_label_map['E2'] = 'E2: RuOx U09874'
+    device_label_map = device_label_map_20260430
 
     print("--- Running with Final Hybrid Transition Analysis ---")
     process_all_data(data_parent_folder,
@@ -338,5 +352,6 @@ if __name__ == "__main__":
                      min_step_mOhm=10,  # Lowered to catch small steps
                      max_width_mK=50,  # Increased to catch softer steps
                      prominence=0.8,  # Threshold for dR/d(Index)
-                     device_labels=device_label_map)
+                     device_labels=device_label_map,
+                     date_label=date)
     # plt.show()
