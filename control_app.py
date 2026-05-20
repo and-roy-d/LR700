@@ -12,6 +12,9 @@ from ramp_controller import controller
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "bftc_workflow"))
 import bftc
 
+DEFAULT_LR700_PORT = "COM14" if sys.platform.startswith("win") else "/dev/ttyUSB0"
+DEFAULT_LS370_PORT = "COM6" if sys.platform.startswith("win") else "/dev/ttyUSB1"
+
 # Define available data columns for the custom plot
 DATA_COLUMNS = [
     {"label": "Time (Local)", "value": "time_local"},
@@ -159,7 +162,7 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
                     style={"color": "#000"}
                 )
             ]),
-            html.Div(className="input-group", children=[html.Label("COM Port"), dcc.Input(id='lr700-port', type='text', value='COM14')]),
+            html.Div(className="input-group", children=[html.Label("COM Port / Serial Port"), dcc.Input(id='lr700-port', type='text', value=DEFAULT_LR700_PORT)]),
             html.Div(className="input-group", children=[html.Label("GPIB Address"), dcc.Input(id='lr700-gpib', type='number', value=17)]),
         ]),
 
@@ -170,10 +173,11 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
                 dcc.Dropdown(
                     id='instrument-dropdown',
                     options=[
-                        {'label': 'Bluefors', 'value': 'Bluefors'},
-                        {'label': 'LakeShore', 'value': 'LakeShore'}
+                        {'label': 'Myriad/Miniebit', 'value': 'Myriad/Miniebit'},
+                        {'label': 'KPAC', 'value': 'KPAC'},
+                        {'label': '2120 OG', 'value': '2120 OG'}
                     ],
-                    value='Bluefors',
+                    value='Myriad/Miniebit',
                     clearable=False,
                     style={"color": "#000"} # Fix dropdown text color
                 )
@@ -184,9 +188,9 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
             ])
         ]),
 
-        # Bluefors Settings
+        # Myriad/Miniebit Settings
         html.Div(id='bluefors-settings', className="card", children=[
-            html.H3("Bluefors Settings"),
+            html.H3("Myriad/Miniebit Settings"),
             html.Div(className="input-group", children=[html.Label("IP Address"), dcc.Input(id='bf-ip', type='text', value='169.169.10.10:5001')]),
             html.Div(className="input-group", children=[
                 html.Label("Thermometer Source (Channel)"),
@@ -212,14 +216,171 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
             html.Div(className="input-group", children=[html.Label("Timeout (s)"), dcc.Input(id='bf-timeout', type='number', value=3600)]),
         ]),
 
-        # LakeShore Settings
+        # KPAC Settings
         html.Div(id='lakeshore-settings', className="card hidden", children=[
-            html.H3("LakeShore Settings"),
-            html.Div(className="input-group", children=[html.Label("COM Port"), dcc.Input(id='ls-port', type='text', value='COM6')]),
+            html.H3("KPAC Settings"),
+            html.Div(className="input-group", children=[html.Label("COM Port / Serial Port"), dcc.Input(id='ls-port', type='text', value=DEFAULT_LS370_PORT)]),
+            html.Div(className="input-group", children=[
+                html.Label("GPIB Address (Optional)"),
+                dcc.Input(id='ls-gpib', type='number', placeholder='e.g., 15 (leave blank for RS-232)', value=15)
+            ]),
             html.Div(className="input-group", children=[html.Label("Baudrate"), dcc.Input(id='ls-baudrate', type='number', value=9600)]),
-            html.Div(className="input-group", children=[html.Label("Channel"), dcc.Input(id='ls-channel', type='number', value=4)]),
+            html.Div(className="input-group", children=[html.Label("Channel"), dcc.Input(id='ls-channel', type='number', value=5)]),
+            html.Div(style={"marginTop": "8px"}, children=[
+                dcc.Checklist(
+                    id='ls-solo-channel',
+                    options=[{'label': ' Solo selected channel (turn off others)', 'value': 'solo'}],
+                    value=[],
+                    style={"color": "#f8fafc", "fontSize": "0.85em"}
+                ),
+                html.Div(id='ls-solo-status', style={"marginTop": "4px", "color": "#f59e0b", "fontSize": "0.8em"})
+            ]),
             html.Div(className="input-group", children=[html.Label("Target Setpoint (K)"), dcc.Input(id='ls-setpoint', type='number', value=0.010)]),
             html.Div(className="input-group", children=[html.Label("Ramp Rate (K/min)"), dcc.Input(id='ls-rate', type='number', value=0.001)]),
+            
+            # Advanced controls (hidden from UI to keep it simple, but kept in DOM to preserve Dash callbacks)
+            html.Div(style={"display": "none"}, children=[
+                html.Div(className="input-group", children=[
+                    html.Label("Control Loop Mode"),
+                    dcc.Dropdown(
+                        id='ls-cmode',
+                        options=[
+                            {'label': 'Closed Loop PID', 'value': 1},
+                            {'label': 'Open Loop', 'value': 3}
+                        ],
+                        value=1,
+                        clearable=False,
+                        style={"color": "#000"}
+                    )
+                ]),
+                html.Div(className="input-group", children=[
+                    html.Label("Heater Range"),
+                    dcc.Dropdown(
+                        id='ls-hrng',
+                        options=[
+                            {'label': 'Off', 'value': 0},
+                            {'label': '31.6 µA', 'value': 1},
+                            {'label': '100 µA', 'value': 2},
+                            {'label': '316 µA', 'value': 3},
+                            {'label': '1.00 mA', 'value': 4},
+                            {'label': '3.16 mA', 'value': 5},
+                            {'label': '10.0 mA', 'value': 6},
+                            {'label': '31.6 mA', 'value': 7},
+                            {'label': '100 mA', 'value': 8}
+                        ],
+                        value=6,
+                        clearable=False,
+                        style={"color": "#000"}
+                    )
+                ]),
+                html.Div(style={"display": "flex", "gap": "10px", "marginTop": "10px"}, children=[
+                    html.Div(className="input-group", style={"flex": "1"}, children=[
+                        html.Label("P"),
+                        dcc.Input(id='ls-p', type='number', value=10.0)
+                    ]),
+                    html.Div(className="input-group", style={"flex": "1"}, children=[
+                        html.Label("I"),
+                        dcc.Input(id='ls-i', type='number', value=20.0)
+                    ]),
+                    html.Div(className="input-group", style={"flex": "1"}, children=[
+                        html.Label("D"),
+                        dcc.Input(id='ls-d', type='number', value=0.0)
+                    ])
+                ])
+            ])
+        ]),
+
+        # 2120 OG Settings Card
+        html.Div(id='og-settings', className="card hidden", children=[
+            html.H3("2120 OG Settings"),
+            html.Div(className="input-group", children=[html.Label("Lakeshore Port"), dcc.Input(id='og-port', type='text', value=DEFAULT_LS370_PORT)]),
+            html.Div(className="input-group", children=[html.Label("Lakeshore GPIB Address"), dcc.Input(id='og-gpib', type='number', value=15)]),
+            html.Div(className="input-group", children=[html.Label("Baudrate"), dcc.Input(id='og-baudrate', type='number', value=9600)]),
+            html.Div(className="input-group", children=[html.Label("Channel"), dcc.Input(id='og-channel', type='number', value=5)]),
+            html.Div(style={"marginTop": "8px"}, children=[
+                dcc.Checklist(
+                    id='og-solo-channel',
+                    options=[{'label': ' Solo selected channel (turn off others)', 'value': 'solo'}],
+                    value=[],
+                    style={"color": "#f8fafc", "fontSize": "0.85em"}
+                ),
+                html.Div(id='og-solo-status', style={"marginTop": "4px", "color": "#f59e0b", "fontSize": "0.8em"})
+            ]),
+            html.Div(className="input-group", children=[html.Label("Target Temp (mK)"), dcc.Input(id='og-target-temp', type='number', value=50.0)]),
+            html.Div(className="input-group", children=[
+                html.Label("Heater Range"),
+                dcc.Dropdown(
+                    id='og-hrng',
+                    options=[
+                        {'label': 'Off', 'value': 0},
+                        {'label': '31.6 µA', 'value': 1},
+                        {'label': '100 µA', 'value': 2},
+                        {'label': '316 µA', 'value': 3},
+                        {'label': '1.00 mA', 'value': 4},
+                        {'label': '3.16 mA', 'value': 5},
+                        {'label': '10.0 mA', 'value': 6},
+                        {'label': '31.6 mA', 'value': 7},
+                        {'label': '100 mA', 'value': 8}
+                    ],
+                    value=5,
+                    clearable=False,
+                    style={"color": "#000"}
+                )
+            ]),
+            # Initial output with 'Use current output' checkbox
+            html.Div(style={"display": "flex", "gap": "8px", "alignItems": "flex-end", "marginBottom": "12px"}, children=[
+                html.Div(style={"flex": "1"}, children=[
+                    html.Label("Initial Output (%)", style={"display": "block", "fontSize": "0.85em", "color": "#94a3b8", "marginBottom": "4px"}),
+                    dcc.Input(id='og-init-output', type='number', value=0.0,
+                              style={"width": "100%", "padding": "8px", "borderRadius": "4px",
+                                     "border": "1px solid #475569", "backgroundColor": "#1e293b",
+                                     "color": "white", "boxSizing": "border-box"})
+                ]),
+                html.Div(style={"paddingBottom": "6px"}, children=[
+                    dcc.Checklist(
+                        id='og-use-current-output',
+                        options=[{'label': ' Use current', 'value': 'use'}],
+                        value=[],
+                        style={"color": "#f8fafc", "fontSize": "0.8em", "whiteSpace": "nowrap"}
+                    )
+                ])
+            ]),
+            html.Div(className="input-group", children=[html.Label("Output Step (%)"), dcc.Input(id='og-output-step', type='number', value=1.0)]),
+            html.Div(className="input-group", children=[html.Label("Step Delay (s)"), dcc.Input(id='og-step-delay', type='number', value=10)]),
+            html.Div(className="input-group", children=[html.Label("Max Output (%)"), dcc.Input(id='og-max-output', type='number', value=100.0)]),
+            html.Div(className="input-group", children=[html.Label("Heater Resistance (Ohms)"), dcc.Input(id='og-resistance', type='number', value=120.0)]),
+            # Ramp Mode dropdown
+            html.Div(className="input-group", children=[
+                html.Label("Ramp Mode"),
+                dcc.Dropdown(
+                    id='og-ramp-mode',
+                    options=[
+                        {'label': 'Constant Current Ramp', 'value': 'constant_current'},
+                        {'label': 'Linear Power Steps (Constant dP/dt)', 'value': 'linear_power'},
+                        {'label': 'Software PI Control', 'value': 'software_pi'},
+                    ],
+                    value='constant_current',
+                    clearable=False,
+                    style={"color": "#000"}
+                )
+            ]),
+            # PI parameters — hidden unless Software PI is selected
+            html.Div(id='og-pi-params', style={"display": "none"}, children=[
+                html.Div(className="input-group", children=[
+                    html.Label("Ramp Rate (mK/min)"),
+                    dcc.Input(id='og-ramp-rate', type='number', value=2.0)
+                ]),
+                html.Div(style={"display": "flex", "gap": "8px"}, children=[
+                    html.Div(className="input-group", style={"flex": "1"}, children=[
+                        html.Label("Kp (µW/mK)"),
+                        dcc.Input(id='og-kp', type='number', value=5.0)
+                    ]),
+                    html.Div(className="input-group", style={"flex": "1"}, children=[
+                        html.Label("Ki (µW/mK·s)"),
+                        dcc.Input(id='og-ki', type='number', value=0.1)
+                    ])
+                ])
+            ]),
         ]),
 
         # Controls
@@ -270,6 +431,9 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
             html.Div(style={"marginTop": "10px"}, children=[
                 html.Div([html.Span("Current Temp: ", style={"color": "#94a3b8"}), html.Span("-", id="status-temp", className="status-val")]),
                 html.Div([html.Span("Power/Setpoint: ", style={"color": "#94a3b8"}), html.Span("-", id="status-power", className="status-val")]),
+                html.Div([html.Span("Control Mode: ", style={"color": "#94a3b8"}), html.Span("-", id="status-cmode", style={"fontWeight": "bold", "color": "#38bdf8"})]),
+                html.Div([html.Span("Heater Range: ", style={"color": "#94a3b8"}), html.Span("-", id="status-hrng", style={"fontWeight": "bold", "color": "#38bdf8"})]),
+                html.Div([html.Span("Active PID: ", style={"color": "#94a3b8"}), html.Span("-", id="status-pid", style={"fontWeight": "bold", "color": "#38bdf8"})])
             ])
         ])
     ]),
@@ -298,13 +462,17 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
 
 @app.callback(
     [Output('bluefors-settings', 'className'),
-     Output('lakeshore-settings', 'className')],
+     Output('lakeshore-settings', 'className'),
+     Output('og-settings', 'className')],
     Input('instrument-dropdown', 'value')
 )
 def toggle_settings(instrument):
-    if instrument == 'Bluefors':
-        return 'card', 'card hidden'
-    return 'card hidden', 'card'
+    if instrument == 'Myriad/Miniebit':
+        return 'card', 'card hidden', 'card hidden'
+    elif instrument == 'KPAC':
+        return 'card hidden', 'card', 'card hidden'
+    else:
+        return 'card hidden', 'card hidden', 'card'
 
 @app.callback(
     Output('logging-settings', 'className'),
@@ -346,20 +514,130 @@ def toggle_solo_channel(solo_val, bf_source, bf_ip):
         return f"Error: {e}"
 
 @app.callback(
+    Output('ls-solo-status', 'children'),
+    [Input('ls-solo-channel', 'value')],
+    [State('ls-channel', 'value'), State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-gpib', 'value')],
+    prevent_initial_call=True
+)
+def toggle_ls_solo_channel(solo_val, ls_channel, ls_port, ls_baudrate, ls_gpib):
+    """Turn off all channels except the selected one, or restore all."""
+    print(f"[LS Solo CB] solo_val={solo_val!r}, ls_channel={ls_channel!r}, ls_port={ls_port!r}, ls_gpib={ls_gpib!r}")
+    try:
+        ls_channel = int(ls_channel)
+        
+        import sys
+        import pathlib
+        workflow_path = str(pathlib.Path(__file__).resolve().parent / "lakeshore_workflow")
+        if workflow_path not in sys.path:
+            sys.path.insert(0, workflow_path)
+        from lakeshore_370_temperature_test import LakeShore370
+        
+        with LakeShore370(port=ls_port, baudrate=ls_baudrate, gpib_address=ls_gpib) as ls:
+            if solo_val and 'solo' in solo_val:
+                ls.solo_channel(ls_channel)
+                return f"Solo CH {ls_channel} — others disabled"
+            else:
+                ls.enable_all_channels()
+                return "All channels re-enabled"
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return f"Error: {e}"
+
+@app.callback(
+    Output('og-solo-status', 'children'),
+    [Input('og-solo-channel', 'value')],
+    [State('og-channel', 'value'), State('og-port', 'value'), State('og-baudrate', 'value'), State('og-gpib', 'value')],
+    prevent_initial_call=True
+)
+def toggle_og_solo_channel(solo_val, og_channel, og_port, og_baudrate, og_gpib):
+    """Turn off all channels except the selected one, or restore all for 2120 OG."""
+    print(f"[OG Solo CB] solo_val={solo_val!r}, og_channel={og_channel!r}, og_port={og_port!r}, og_gpib={og_gpib!r}")
+    try:
+        og_channel = int(og_channel)
+        
+        import sys
+        import pathlib
+        workflow_path = str(pathlib.Path(__file__).resolve().parent / "lakeshore_workflow")
+        if workflow_path not in sys.path:
+            sys.path.insert(0, workflow_path)
+        from lakeshore_370_temperature_test import LakeShore370
+        
+        # Parse inputs correctly
+        gpib_val = int(og_gpib) if og_gpib else None
+        baud_val = int(og_baudrate) if og_baudrate else 9600
+        
+        with LakeShore370(port=og_port, baudrate=baud_val, gpib_address=gpib_val) as ls:
+            if solo_val and 'solo' in solo_val:
+                ls.solo_channel(og_channel)
+                return f"Solo CH {og_channel} — others disabled"
+            else:
+                ls.enable_all_channels()
+                return "All channels re-enabled"
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return f"Error: {e}"
+
+@app.callback(
+    Output('og-pi-params', 'style'),
+    Input('og-ramp-mode', 'value')
+)
+def toggle_og_pi_params(ramp_mode):
+    """Show PI parameter fields only when Software PI mode is selected."""
+    if ramp_mode == 'software_pi':
+        return {"display": "block", "marginTop": "4px", "padding": "8px",
+                "backgroundColor": "#1e293b", "borderRadius": "6px",
+                "border": "1px solid #475569"}
+    return {"display": "none"}
+
+@app.callback(
+    Output('og-init-output', 'disabled'),
+    Input('og-use-current-output', 'value')
+)
+def toggle_og_init_output_disabled(use_current):
+    """Disable the Initial Output field when 'Use current' is checked."""
+    return bool(use_current and 'use' in use_current)
+
+@app.callback(
     Output('conn-status-text', 'children'),
     Input('btn-test-conn', 'n_clicks'),
     [State('instrument-dropdown', 'value'),
      State('bf-source', 'value'), State('bf-ip', 'value'),
-     State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-channel', 'value'),
-     State('lr700-adapter', 'value'), State('lr700-port', 'value'), State('lr700-gpib', 'value')],
+     State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-channel', 'value'), State('ls-gpib', 'value'),
+     State('lr700-adapter', 'value'), State('lr700-port', 'value'), State('lr700-gpib', 'value'),
+     # 2120 OG states
+     State('og-port', 'value'), State('og-baudrate', 'value'), State('og-channel', 'value'), State('og-gpib', 'value')],
     prevent_initial_call=True
 )
-def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate, ls_channel, lr700_adapter, lr700_port, lr700_gpib):
-    print(f"[Test Conn] instrument={instrument}, bf_ip={bf_ip}, bf_source={bf_source}, lr700_port={lr700_port}, lr700_adapter={lr700_adapter}")
+def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate, ls_channel, ls_gpib, lr700_adapter, lr700_port, lr700_gpib,
+                    og_port, og_baudrate, og_channel, og_gpib):
+    print(f"[Test Conn] instrument={instrument}, bf_ip={bf_ip}, bf_source={bf_source}, ls_port={ls_port}, ls_gpib={ls_gpib}, lr700_port={lr700_port}, lr700_adapter={lr700_adapter}")
     try:
+        # Map parameters based on active instrument
+        if instrument == "2120 OG":
+            active_bf_ip = None
+            active_ls_port = og_port
+            active_ls_baud = og_baudrate
+            active_ls_gpib = og_gpib
+            active_ls_channel = og_channel
+            active_bf_source = None
+        elif instrument == "Myriad/Miniebit":
+            active_bf_ip = bf_ip
+            active_ls_port = None
+            active_ls_baud = 9600
+            active_ls_gpib = None
+            active_ls_channel = None
+            active_bf_source = bf_source
+        else: # KPAC
+            active_bf_ip = None
+            active_ls_port = ls_port
+            active_ls_baud = ls_baudrate
+            active_ls_gpib = ls_gpib
+            active_ls_channel = ls_channel
+            active_bf_source = None
+
         result = controller.check_connection(
-            instrument, bf_source=bf_source, bf_ip=bf_ip, 
-            ls_port=ls_port, ls_baudrate=ls_baudrate, ls_channel=ls_channel,
+            instrument, bf_source=active_bf_source, bf_ip=active_bf_ip, 
+            ls_port=active_ls_port, ls_baudrate=active_ls_baud, ls_channel=active_ls_channel, ls_gpib=active_ls_gpib,
             lr700_adapter=lr700_adapter, lr700_port=lr700_port, lr700_gpib=lr700_gpib
         )
         print(f"[Test Conn] result: {result}")
@@ -374,7 +652,11 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      Output('status-temp', 'children'),
      Output('status-power', 'children'),
      Output('btn-pause', 'children'),
-     Output('log-status-text', 'children')],
+     Output('log-status-text', 'children'),
+     Output('status-cmode', 'children'),
+     Output('status-hrng', 'children'),
+     Output('status-pid', 'children'),
+     Output('og-init-output', 'value')],
     [Input('btn-start', 'n_clicks'),
      Input('btn-pause', 'n_clicks'),
      Input('btn-stop', 'n_clicks'),
@@ -385,25 +667,86 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      State('bf-ip', 'value'), State('bf-source', 'value'), State('bf-target', 'value'), State('bf-init-power', 'value'), 
      State('bf-step', 'value'), State('bf-delay', 'value'), State('bf-timeout', 'value'), State('bf-max-power', 'value'),
      State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-channel', 'value'), 
-     State('ls-setpoint', 'value'), State('ls-rate', 'value'),
+     State('ls-setpoint', 'value'), State('ls-rate', 'value'), State('ls-gpib', 'value'),
      State('lr700-adapter', 'value'), State('lr700-port', 'value'), State('lr700-gpib', 'value'),
-     State('log-dir', 'value'), State('log-prefix', 'value'), State('log-interval', 'value')]
+     State('log-dir', 'value'), State('log-prefix', 'value'), State('log-interval', 'value'),
+     State('ls-cmode', 'value'), State('ls-hrng', 'value'),
+     State('ls-p', 'value'), State('ls-i', 'value'), State('ls-d', 'value'),
+     # 2120 OG states
+     State('og-port', 'value'), State('og-gpib', 'value'), State('og-baudrate', 'value'), State('og-channel', 'value'),
+     State('og-target-temp', 'value'), State('og-hrng', 'value'), State('og-init-output', 'value'),
+     State('og-output-step', 'value'), State('og-step-delay', 'value'), State('og-max-output', 'value'), State('og-resistance', 'value'),
+     State('og-solo-channel', 'value'),
+     State('og-ramp-mode', 'value'), State('og-use-current-output', 'value'),
+     State('og-ramp-rate', 'value'), State('og-kp', 'value'), State('og-ki', 'value')]
 )
-def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int, 
+def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
                     instrument, bf_ip, bf_source, bf_target, bf_init, bf_step, bf_delay, bf_timeout, bf_max,
-                    ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate,
+                    ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate, ls_gpib,
                     lr700_adapter, lr700_port, lr700_gpib,
-                    log_dir, log_prefix, log_interval):
-    
+                    log_dir, log_prefix, log_interval,
+                    ls_cmode, ls_hrng, ls_p, ls_i, ls_d,
+                    og_port, og_gpib, og_baudrate, og_channel,
+                    og_target_temp, og_hrng, og_init_output, og_output_step,
+                    og_step_delay, og_max_output, og_resistance, og_solo_channel,
+                    og_ramp_mode, og_use_current_output, og_ramp_rate, og_kp, og_ki):
+
     ctx = callback_context
     if ctx.triggered:
         trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-        
+
         if trigger_id == 'btn-start':
-            if instrument == 'Bluefors':
-                controller.start_bluefors(bf_ip, bf_source, bf_target*1e-3, bf_init*1e-6, bf_step*1e-6, bf_delay, bf_timeout, bf_max*1e-6)
-            else:
-                controller.start_lakeshore(ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate)
+            if instrument == 'Myriad/Miniebit':
+                controller.start_myriad(bf_ip, bf_source, bf_target*1e-3, bf_init*1e-6, bf_step*1e-6, bf_delay, bf_timeout, bf_max*1e-6)
+            elif instrument == 'KPAC':
+                controller.start_kpac(
+                    ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate, gpib_address=ls_gpib,
+                    control_mode=ls_cmode, heater_range=ls_hrng, p_val=ls_p, i_val=ls_i, d_val=ls_d
+                )
+            elif instrument == '2120 OG':
+                og_port_val = og_port if og_port else DEFAULT_LS370_PORT
+                og_baudrate_val = int(og_baudrate) if og_baudrate else 9600
+                og_channel_val = int(og_channel) if og_channel else 5
+                og_gpib_val = int(og_gpib) if og_gpib else None
+                og_target_temp_val = float(og_target_temp) if og_target_temp else 50.0
+                og_hrng_val = int(og_hrng) if og_hrng is not None else 5
+                og_output_step_val = float(og_output_step) if og_output_step is not None else 1.0
+                og_step_delay_val = float(og_step_delay) if og_step_delay is not None else 10.0
+                og_max_output_val = float(og_max_output) if og_max_output is not None else 100.0
+                og_resistance_val = float(og_resistance) if og_resistance else 120.0
+                og_solo_ch_bool = True if (og_solo_channel and 'solo' in og_solo_channel) else False
+                og_ramp_mode_val = og_ramp_mode if og_ramp_mode else 'constant_current'
+                og_use_curr_bool = True if (og_use_current_output and 'use' in og_use_current_output) else False
+                og_ramp_rate_val = float(og_ramp_rate) if og_ramp_rate is not None else 2.0
+                og_kp_val = float(og_kp) if og_kp is not None else 5.0
+                og_ki_val = float(og_ki) if og_ki is not None else 0.1
+
+                # Resolve starting output: query live MOUT? if 'Use current' is checked
+                if og_use_curr_bool:
+                    try:
+                        from lakeshore_workflow.lakeshore_370_temperature_test import LakeShore370
+                        with LakeShore370(port=og_port_val, baudrate=og_baudrate_val,
+                                          gpib_address=og_gpib_val) as ls:
+                            og_init_output_val = float(ls.query("MOUT?"))
+                        print(f"[Start 2120 OG] Read live MOUT: {og_init_output_val:.4g}%")
+                    except Exception as e:
+                        print(f"[Start 2120 OG] Could not read MOUT?, using field value: {e}")
+                        og_init_output_val = float(og_init_output) if og_init_output is not None else 0.0
+                else:
+                    og_init_output_val = float(og_init_output) if og_init_output is not None else 0.0
+
+                resolved_init_output = round(og_init_output_val, 4)
+
+                controller.start_2120_og(
+                    og_port_val, og_baudrate_val, og_channel_val, og_gpib_val,
+                    og_target_temp_val, og_hrng_val, og_init_output_val, og_output_step_val,
+                    og_step_delay_val, og_max_output_val, og_resistance_val,
+                    solo_channel=og_solo_ch_bool,
+                    ramp_mode=og_ramp_mode_val,
+                    ramp_rate_mk_per_min=og_ramp_rate_val,
+                    kp=og_kp_val,
+                    ki=og_ki_val,
+                )
                 
         elif trigger_id == 'btn-pause':
             st = controller.get_status()['state']
@@ -414,24 +757,53 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
                 
         elif trigger_id == 'btn-stop':
             controller.stop()
-
+ 
         elif trigger_id == 'btn-log-start':
             log_dir_val = log_dir if log_dir else ""
             log_prefix_val = log_prefix if log_prefix else ""
             log_interval_val = log_interval if log_interval else 1
+            
+            # Map parameters based on active instrument
+            if instrument == '2120 OG':
+                active_bf_ip = None
+                active_ls_port = og_port
+                active_ls_baud = int(og_baudrate) if og_baudrate else 9600
+                active_ls_gpib = int(og_gpib) if og_gpib else None
+                active_ls_channel = int(og_channel) if og_channel else 5
+                active_bf_source = None
+                heater_resistance = float(og_resistance) if og_resistance else 120.0
+            elif instrument == 'Myriad/Miniebit':
+                active_bf_ip = bf_ip
+                active_ls_port = None
+                active_ls_baud = 9600
+                active_ls_gpib = None
+                active_ls_channel = None
+                active_bf_source = bf_source
+                heater_resistance = 120.0
+            else: # KPAC
+                active_bf_ip = None
+                active_ls_port = ls_port
+                active_ls_baud = int(ls_baudrate) if ls_baudrate else 9600
+                active_ls_gpib = int(ls_gpib) if ls_gpib else None
+                active_ls_channel = int(ls_channel) if ls_channel else 5
+                active_bf_source = None
+                heater_resistance = 120.0
+ 
             controller.start_logging(
                 instrument, log_dir_val, log_prefix_val, log_interval_val,
-                bf_ip=bf_ip, bf_source=bf_source, ls_port=ls_port, ls_baudrate=ls_baudrate, ls_channel=ls_channel,
-                lr700_adapter=lr700_adapter, lr700_port=lr700_port, lr700_gpib=lr700_gpib
+                bf_ip=active_bf_ip, bf_source=active_bf_source, 
+                ls_port=active_ls_port, ls_baudrate=active_ls_baud, ls_channel=active_ls_channel, ls_gpib=active_ls_gpib,
+                lr700_adapter=lr700_adapter, lr700_port=lr700_port, lr700_gpib=lr700_gpib,
+                heater_resistance=heater_resistance
             )
             
         elif trigger_id == 'btn-log-stop':
             controller.stop_logging()
-
+ 
     status = controller.get_status()
     temp_str = f"{status['current_temp']*1000:.2f} mK" if status['current_temp'] is not None else "-"
     if status['current_power_or_setpoint'] is not None:
-        if status['instrument'] == 'Bluefors':
+        if status['instrument'] in ['Myriad/Miniebit', '2120 OG']:
             power_str = f"{status['current_power_or_setpoint']*1e6:.2f} uW"
         else:
             power_str = f"{status['current_power_or_setpoint']*1000:.2f} mK (Set)"
@@ -440,8 +812,16 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
 
     pause_btn_text = "Resume" if status['state'] == "PAUSED" else "Pause"
     log_status_text = controller.log_message
-    
-    return status['state'], status['message'], temp_str, power_str, pause_btn_text, log_status_text
+
+    cmode_status = status.get('current_control_mode') if status.get('current_control_mode') else "-"
+    hrng_status = status.get('current_heater_range') if status.get('current_heater_range') else "-"
+    pid_status = status.get('current_pid') if status.get('current_pid') else "-"
+
+    # Only push og-init-output update when we resolved a live MOUT value on Start
+    init_out_update = resolved_init_output if 'resolved_init_output' in dir() else no_update
+
+    return (status['state'], status['message'], temp_str, power_str, pause_btn_text,
+            log_status_text, cmode_status, hrng_status, pid_status, init_out_update)
 
 def fetch_latest_data():
     try:
@@ -531,4 +911,4 @@ def update_plots(n, x_key, y_key):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8052)
+    app.run(debug=True, use_reloader=False, port=8052)
