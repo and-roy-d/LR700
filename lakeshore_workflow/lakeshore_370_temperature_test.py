@@ -8,8 +8,19 @@ import serial
 from serial.tools import list_ports
 
 
-DEFAULT_PORT = "COM6"
-DEFAULT_CHANNEL = 4
+import sys
+from pathlib import Path
+_parent = Path(__file__).resolve().parent.parent
+if str(_parent) not in sys.path:
+    sys.path.insert(0, str(_parent))
+import port_locker
+
+if sys.platform.startswith("win"):
+    DEFAULT_PORT = "COM6"
+else:
+    DEFAULT_PORT = "/dev/ttyUSB1"
+
+DEFAULT_CHANNEL = 5
 DEFAULT_BAUDRATE = 9600
 
 
@@ -52,24 +63,66 @@ class LakeShore370:
         baudrate: int = DEFAULT_BAUDRATE,
         timeout: float = 1.5,
         post_response_delay: float = 0.05,
+        gpib_address: int | None = None,
     ) -> None:
         self.timeout = timeout
         self.post_response_delay = post_response_delay
-        self.serial = serial.Serial(
-            port=port,
-            baudrate=baudrate,
-            timeout=timeout,
-            write_timeout=timeout,
-            bytesize=serial.SEVENBITS,
-            parity=serial.PARITY_ODD,
-            stopbits=serial.STOPBITS_ONE,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        )
+        self.gpib_address = gpib_address
+        
+        self.port = port
+        self.lock = port_locker.get_port_lock(port)
+        self.lock.acquire()
+        self.has_lock = True
+        
+        try:
+            if gpib_address is not None:
+                # Prologix controller requires standard 8N1 serial parameters
+                self.serial = serial.Serial(
+                    port=port,
+                    baudrate=9600,  # Prologix controller defaults to 9600
+                    timeout=timeout,
+                    write_timeout=timeout,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                )
+                # Configure Prologix controller
+                self.serial.write(b"++savecfg 0\n")
+                self.serial.write(b"++mode 1\n")
+                self.serial.write(f"++addr {gpib_address}\n".encode("ascii"))
+                self.serial.write(b"++auto 1\n")
+                self.serial.write(b"++eoi 1\n")
+                self.serial.write(b"++eos 2\n")
+                self.serial.write(f"++read_tmo_ms {min(max(int(timeout * 1000), 1), 3000)}\n".encode("ascii"))
+                self.serial.write(b"++ifc\n")
+                self.serial.flush()
+                time.sleep(0.15)
+            else:
+                self.serial = serial.Serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    write_timeout=timeout,
+                    bytesize=serial.SEVENBITS,
+                    parity=serial.PARITY_ODD,
+                    stopbits=serial.STOPBITS_ONE,
+                    xonxoff=False,
+                    rtscts=False,
+                    dsrdtr=False,
+                )
+        except Exception:
+            self.lock.release()
+            self.has_lock = False
+            raise
 
     def close(self) -> None:
-        self.serial.close()
+        try:
+            if hasattr(self, "serial") and self.serial:
+                self.serial.close()
+        finally:
+            if hasattr(self, "has_lock") and self.has_lock:
+                self.lock.release()
+                self.has_lock = False
 
     def __enter__(self) -> "LakeShore370":
         self.serial.reset_input_buffer()
@@ -81,7 +134,10 @@ class LakeShore370:
 
     def query(self, command: str) -> str:
         self.serial.reset_input_buffer()
-        self.serial.write(f"{command}\r\n".encode("ascii"))
+        if self.gpib_address is not None:
+            self.serial.write(f"{command}\n".encode("ascii"))
+        else:
+            self.serial.write(f"{command}\r\n".encode("ascii"))
         self.serial.flush()
         response = self.serial.readline().decode("ascii", errors="replace").strip()
         time.sleep(self.post_response_delay)
@@ -101,6 +157,68 @@ class LakeShore370:
             return int(parts[0]), int(parts[1])
         except ValueError as exc:
             raise LS370ReadError(f"Invalid SCAN? response: {response!r}") from exc
+
+    def get_channel_setup(self, channel: int) -> str:
+        return self.query(f"INSET? {channel}")
+
+    def set_channel_enable(self, channel: int, enable: bool) -> None:
+        setup = self.get_channel_setup(channel)
+        parts = [part.strip() for part in setup.split(",")]
+        if len(parts) >= 5:
+            parts[0] = "1" if enable else "0"
+            new_setup = ",".join(parts)
+            self._write_command(f"INSET {channel},{new_setup}")
+
+    def solo_channel(self, active_channel: int) -> None:
+        # Enable the active channel first
+        self.set_channel_enable(active_channel, True)
+        # Disable all other channels 1 through 16
+        for ch in range(1, 17):
+            if ch != active_channel:
+                try:
+                    self.set_channel_enable(ch, False)
+                except Exception:
+                    pass
+
+    def enable_all_channels(self) -> None:
+        for ch in range(1, 17):
+            try:
+                self.set_channel_enable(ch, True)
+            except Exception:
+                pass
+
+    def control_mode(self) -> int:
+        response = self.query("CMODE?")
+        try:
+            return int(response)
+        except ValueError as exc:
+            raise LS370ReadError(f"Invalid CMODE? response: {response!r}") from exc
+
+    def set_control_mode(self, mode: int) -> None:
+        self._write_command(f"CMODE {mode}")
+
+    def heater_range(self) -> int:
+        response = self.query("HTRRNG?")
+        try:
+            return int(response)
+        except ValueError as exc:
+            raise LS370ReadError(f"Invalid HTRRNG? response: {response!r}") from exc
+
+    def set_heater_range(self, range_val: int) -> None:
+        self._write_command(f"HTRRNG {range_val}")
+
+    def pid_parameters(self) -> tuple[float, float, float]:
+        response = self.query("PID? 1")
+        parts = [part.strip() for part in response.split(",")]
+        if len(parts) != 3:
+            raise LS370ReadError(f"Unexpected PID? response: {response!r}")
+        try:
+            return float(parts[0]), float(parts[1]), float(parts[2])
+        except ValueError as exc:
+            raise LS370ReadError(f"Invalid PID? response: {response!r}") from exc
+
+    def set_pid_parameters(self, p: float, i: float, d: float) -> None:
+        self._write_command(f"PID 1,{p:.9g},{i:.9g},{d:.9g}")
 
     def temperature_kelvin(self, channel: int) -> float:
         return self._parse_float(self.query(f"RDGK? {channel}"), f"RDGK? {channel}")
@@ -174,7 +292,10 @@ class LakeShore370:
 
     def _write_command(self, command: str) -> None:
         self.serial.reset_input_buffer()
-        self.serial.write(f"{command}\r\n".encode("ascii"))
+        if self.gpib_address is not None:
+            self.serial.write(f"{command}\n".encode("ascii"))
+        else:
+            self.serial.write(f"{command}\r\n".encode("ascii"))
         self.serial.flush()
         time.sleep(self.post_response_delay)
 
@@ -209,10 +330,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="LS370 baud rate",
     )
     parser.add_argument(
+        "--gpib-address",
+        type=int,
+        default=None,
+        help="GPIB address when using Prologix GPIB-to-USB controller (optional)",
+    )
+    parser.add_argument(
         "--channel",
         type=int,
         default=DEFAULT_CHANNEL,
         help="Measurement channel to query (1-16). If no scanner is installed, use 1.",
+    )
+    parser.add_argument(
+        "--solo",
+        action="store_true",
+        help="Turn off all other scanner channels except the selected channel",
     )
     parser.add_argument(
         "--timeout",
@@ -315,6 +447,7 @@ def main() -> int:
             port=args.port,
             baudrate=args.baudrate,
             timeout=args.timeout,
+            gpib_address=args.gpib_address,
         ) as bridge:
             if args.raw_query:
                 print(bridge.query(args.raw_query))
@@ -322,6 +455,9 @@ def main() -> int:
 
             ident = bridge.identify()
             print(f"IDN: {ident}")
+
+            if args.solo:
+                bridge.solo_channel(args.channel)
 
             if args.setpoint_k is not None:
                 bridge.set_setpoint_kelvin(args.setpoint_k)

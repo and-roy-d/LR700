@@ -163,8 +163,11 @@ def collapse_staircase_fixed_shift(
 
 if __name__ == "__main__":
     # --- IMPORTANT: Adjust this `folder_to_process` to your actual data folder ---
-    # Example: folder_to_process = pathlib.Path('C:\\Users\\trxuser\\OneDrive - UCB-O365\\Code\\RvsT\\myriad_RvsT_20241223\\A1')
-    folder_to_process = pathlib.Path('C:\\Users\\trxuser\\OneDrive - UCB-O365\\Code\\RvsT\\myriad_RvsT_20241223\\F2')
+    # Try to resolve local 'Data' folder relative to project root or fallback to absolute path
+    local_data = pathlib.Path(__file__).resolve().parents[1] / 'Data'
+    folder_to_process = local_data
+    if not folder_to_process.exists():
+        folder_to_process = pathlib.Path('C:\\Users\\trxuser\\OneDrive - UCB-O365\\Code\\RvsT\\myriad_RvsT_20241223\\F2')
 
     print(f"Attempting to process data from folder: {folder_to_process}")
 

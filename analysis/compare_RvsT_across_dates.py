@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 import pathlib
 
 # --- Configuration ---
-data_parent_folder = pathlib.Path('C:\\Users\\trxuser\\Desktop\\Python\\Instruments\\btfc\\Data\\')
+# Try to resolve 'Data' folder relative to project root or fallback to absolute path
+data_parent_folder = pathlib.Path(__file__).resolve().parents[1] / 'Data'
+if not data_parent_folder.exists():
+    data_parent_folder = pathlib.Path('C:\\Users\\trxuser\\Desktop\\Python\\Instruments\\btfc\\Data\\')
 date_folders = ['20250808', '20250822']
 
 device_label_map = {

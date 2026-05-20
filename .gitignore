@@ -1,2 +1,26 @@
-/Data
-/__pycache__
+# Ignore Local Instrument Data
+/Data/
+
+# Ignore Python Caches
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Ignore Logs and Temporary Files
+*.log
+lakeshore_dash_*.log
+
+# Ignore OneDrive Sync Conflicts (e.g. control-687GLADOS.py)
+*-*GLADOS*
+*-*[A-Za-z0-9_]*.*
+
+# Ignore Local Editor/Tool Configs
+.gemini/
+.idea/
+.vscode/

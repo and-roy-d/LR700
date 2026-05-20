@@ -311,7 +311,12 @@ def analyze_npy_files(parent_folder):
 
 if __name__ == "__main__":
 
-    base_data_folder = "C:\\Users\\trxuser\\Desktop\\Data"
+    # Try to resolve local 'Data' folder relative to project root or fallback to absolute path
+    local_data = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Data"))
+    if os.path.isdir(local_data):
+        base_data_folder = local_data
+    else:
+        base_data_folder = "C:\\Users\\trxuser\\Desktop\\Data"
     experiment_folder = "RvsT_20250505"
     parent_folder = os.path.join(base_data_folder, experiment_folder)
 

@@ -47,10 +47,15 @@ def log_data(
     ls370_port: str = DEFAULT_LS370_PORT,
     ls370_channel: int = DEFAULT_LS370_CHANNEL,
     ls370_baudrate: int = DEFAULT_LS370_BAUDRATE,
+    ls370_gpib_address: int | None = None,
     lr700_adapter: str = 'prologix',
     lr700_port: str = DEFAULT_LR700_PORT,
     lr700_gpib_address: int = DEFAULT_LR700_GPIB_ADDRESS,
     lr700_auto: int = DEFAULT_LR700_AUTO,
+    log_bf_power: bool = False,
+    bf_ip: str | None = None,
+    log_ls_open_loop_power: bool = False,
+    heater_resistance: float = 120.0,
 ) -> None:
     print(
         "Starting Lake Shore/LR700 logging "
@@ -63,58 +68,111 @@ def log_data(
         print(f"Error initializing NpyAppendArray: {exc}")
         return
 
-    from contextlib import ExitStack
     import lr700 as pyvisa_lr700
 
+    if lr700_adapter != 'prologix':
+        try:
+            pyvisa_lr700.init_gpib(lr700_gpib_address)
+        except Exception as exc:
+            print(f"Warning: Failed to initialize pyvisa_lr700: {exc}")
+
     try:
-        with ExitStack() as stack:
-            ls370 = stack.enter_context(LakeShore370(port=ls370_port, baudrate=ls370_baudrate))
-            prologix_bridge = None
-            if lr700_adapter == 'prologix':
-                prologix_bridge = stack.enter_context(PrologixLR700(
-                    port=lr700_port,
-                    gpib_address=lr700_gpib_address,
-                    auto=lr700_auto,
-                ))
-            else:
-                pyvisa_lr700.init_gpib(lr700_gpib_address)
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                print("Stop event detected. Stopping data logging and closing file.")
+                break
 
-            while True:
-                if stop_event is not None and stop_event.is_set():
-                    print("Stop event detected. Stopping data logging and closing file.")
-                    break
+            r = np.nan
+            x = np.nan
+            t = np.nan
+            power_uW = np.nan
+            current_time = time.time()
 
-                try:
-                    if lr700_adapter == 'prologix':
-                        r = prologix_bridge.read_r().value_ohms
-                        x = prologix_bridge.read_x().value_ohms
-                    else:
+            try:
+                # 1. Read LR700
+                if lr700_adapter == 'prologix':
+                    try:
+                        with PrologixLR700(
+                            port=lr700_port,
+                            gpib_address=lr700_gpib_address,
+                            auto=lr700_auto,
+                        ) as lr:
+                            r = lr.read_r().value_ohms
+                            x = lr.read_x().value_ohms
+                    except Exception as exc:
+                        print(f"Warning: Failed to read LR700: {exc}")
+                else:
+                    try:
                         r_val = pyvisa_lr700.read_ohm(lr700_gpib_address)
                         r = r_val if r_val is not None else np.nan
                         x = np.nan
+                    except Exception as exc:
+                        print(f"Warning: Failed to read LR700 via PyVISA: {exc}")
 
-                    t = ls370.temperature_kelvin(ls370_channel)
-                    current_time = time.time()
+                # 2. Read Lake Shore 370 and calculate power
+                try:
+                    with LakeShore370(
+                        port=ls370_port,
+                        baudrate=ls370_baudrate,
+                        gpib_address=ls370_gpib_address,
+                    ) as ls:
+                        t = ls.temperature_kelvin(ls370_channel)
 
-                    entry = np.array(
-                        [(r, x, t, np.nan, current_time)],
-                        dtype=ENTRY_DTYPE,
-                    )
-
-                    print(
-                        f"R: {r * 1000:.2f} mOhm, "
-                        f"X: {x * 1000:.2f} mOhm, "
-                        f"T: {t * 1000:.2f} mK, "
-                        f"Time: {current_time:.2f}s"
-                    )
-                    npaa.append(entry)
-                    time.sleep(logging_interval_s)
-                except KeyboardInterrupt:
-                    print("\nCtrl+C detected. Stopping data logging and closing file.")
-                    break
+                        if log_ls_open_loop_power:
+                            try:
+                                hrng = ls.heater_range()
+                                mout_str = ls.query("MOUT?")
+                                mout = float(mout_str)
+                                range_currents = {
+                                    0: 0.0,
+                                    1: 31.6e-6,
+                                    2: 100e-6,
+                                    3: 316e-6,
+                                    4: 1e-3,
+                                    5: 3.16e-3,
+                                    6: 10e-3,
+                                    7: 31.6e-3,
+                                    8: 100e-3
+                                }
+                                i_full = range_currents.get(hrng, 0.0)
+                                i_actual = i_full * (mout / 100.0)
+                                power_uW = (i_actual ** 2) * heater_resistance * 1e6
+                            except Exception as e:
+                                print(f"Warning: Failed to calculate open loop Lakeshore heater power: {e}")
                 except Exception as exc:
-                    print(f"An error occurred during logging: {exc}")
-                    time.sleep(logging_interval_s * 2)
+                    print(f"Warning: Failed to read LS370: {exc}")
+
+                # 3. Read Bluefors power if requested
+                if log_bf_power and bf_ip:
+                    try:
+                        import bftc
+                        bftc.ip = bf_ip
+                        import bftc_workflow.ramp_heater as bf_ramp_heater
+                        p = bf_ramp_heater.get_latest_heater_power_uW()
+                        if p is not None:
+                            power_uW = p
+                    except Exception as e:
+                        print(f"Warning: Failed to get Bluefors heater power: {e}")
+
+                entry = np.array(
+                    [(r, x, t, power_uW, current_time)],
+                    dtype=ENTRY_DTYPE,
+                )
+
+                print(
+                    f"R: {r * 1000:.2f} mOhm, "
+                    f"X: {x * 1000:.2f} mOhm, "
+                    f"T: {t * 1000:.2f} mK, "
+                    f"Time: {current_time:.2f}s"
+                )
+                npaa.append(entry)
+                time.sleep(logging_interval_s)
+            except KeyboardInterrupt:
+                print("\nCtrl+C detected. Stopping data logging and closing file.")
+                break
+            except Exception as exc:
+                print(f"An error occurred during logging: {exc}")
+                time.sleep(logging_interval_s * 2)
     finally:
         npaa.close()
 
@@ -127,10 +185,15 @@ def main(
     ls370_port: str = DEFAULT_LS370_PORT,
     ls370_channel: int = DEFAULT_LS370_CHANNEL,
     ls370_baudrate: int = DEFAULT_LS370_BAUDRATE,
+    ls370_gpib_address: int | None = None,
     lr700_adapter: str = 'prologix',
     lr700_port: str = DEFAULT_LR700_PORT,
     lr700_gpib_address: int = DEFAULT_LR700_GPIB_ADDRESS,
     lr700_auto: int = DEFAULT_LR700_AUTO,
+    log_bf_power: bool = False,
+    bf_ip: str | None = None,
+    log_ls_open_loop_power: bool = False,
+    heater_resistance: float = 120.0,
 ):
     if not save_dir:
         save_dir = ROOT_DIR / "Data" / datetime.datetime.now().strftime("%Y%m%d")
@@ -156,8 +219,13 @@ def main(
         ls370_port=ls370_port,
         ls370_channel=ls370_channel,
         ls370_baudrate=ls370_baudrate,
+        ls370_gpib_address=ls370_gpib_address,
         lr700_adapter=lr700_adapter,
         lr700_port=lr700_port,
         lr700_gpib_address=lr700_gpib_address,
         lr700_auto=lr700_auto,
+        log_bf_power=log_bf_power,
+        bf_ip=bf_ip,
+        log_ls_open_loop_power=log_ls_open_loop_power,
+        heater_resistance=heater_resistance,
     )

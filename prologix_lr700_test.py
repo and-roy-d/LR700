@@ -8,7 +8,18 @@ import serial
 from serial.tools import list_ports
 
 
-DEFAULT_PORT = "COM11"
+import sys
+from pathlib import Path
+_parent = Path(__file__).resolve().parent
+if str(_parent) not in sys.path:
+    sys.path.insert(0, str(_parent))
+import port_locker
+
+if sys.platform.startswith("win"):
+    DEFAULT_PORT = "COM11"
+else:
+    DEFAULT_PORT = "/dev/ttyUSB0"
+
 DEFAULT_GPIB_ADDRESS = 17
 DEFAULT_AUTO_MODE = 1
 
@@ -39,7 +50,10 @@ def parse_measurement(response: str, expected_kind: str) -> Measurement:
     if len(parts) < 3:
         raise LR700ReadError(f"Unexpected response format: {response!r}")
 
-    value_text, unit_text, kind_text = parts[:3]
+    kind_text = parts[-1]
+    unit_text = parts[-2]
+    value_text = "".join(parts[:-2])
+
     if kind_text != expected_kind:
         raise LR700ReadError(
             f"Expected {expected_kind!r} but received {kind_text!r}: {response!r}"
@@ -74,19 +88,35 @@ class PrologixLR700:
         eos: int = 2,
         auto: int = 0,
     ) -> None:
-        self.serial = serial.Serial(
-            port=port,
-            baudrate=baudrate,
-            timeout=timeout,
-            write_timeout=timeout,
-        )
-        self.gpib_address = gpib_address
-        self.timeout = timeout
-        self.eos = eos
-        self.auto = auto
+        self.port = port
+        self.lock = port_locker.get_port_lock(port)
+        self.lock.acquire()
+        self.has_lock = True
+        
+        try:
+            self.serial = serial.Serial(
+                port=port,
+                baudrate=baudrate,
+                timeout=timeout,
+                write_timeout=timeout,
+            )
+            self.gpib_address = gpib_address
+            self.timeout = timeout
+            self.eos = eos
+            self.auto = auto
+        except Exception:
+            self.lock.release()
+            self.has_lock = False
+            raise
 
     def close(self) -> None:
-        self.serial.close()
+        try:
+            if hasattr(self, "serial") and self.serial:
+                self.serial.close()
+        finally:
+            if hasattr(self, "has_lock") and self.has_lock:
+                self.lock.release()
+                self.has_lock = False
 
     def __enter__(self) -> "PrologixLR700":
         self.configure()
@@ -170,9 +200,18 @@ class PrologixLR700:
 
     def query_measurement(self, get_channel: int, expected_kind: str) -> Measurement:
         if self.auto == 1:
-            self.serial.reset_input_buffer()
-            self._write_instrument(f"GET {get_channel}")
-            return parse_measurement(self._read_response(), expected_kind)
+            last_error: Exception | None = None
+            for attempt in range(3):
+                self.serial.reset_input_buffer()
+                self._write_instrument(f"GET {get_channel}")
+                try:
+                    return parse_measurement(self._read_response(), expected_kind)
+                except LR700ReadError as exc:
+                    last_error = exc
+                    time.sleep(0.1)
+            if last_error is not None:
+                raise last_error
+            raise LR700ReadError("No response received from LR700")
 
         last_error: Exception | None = None
 

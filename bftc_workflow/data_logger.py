@@ -8,6 +8,8 @@ if str(THIS_DIR) not in sys.path:
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+DEFAULT_LR700_PORT = "COM14" if sys.platform.startswith("win") else "/dev/ttyUSB0"
+
 import bftc
 import datetime
 import os
@@ -17,7 +19,7 @@ from npy_append_array import NpyAppendArray
 import ramp_heater
 
 def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
-             target_temp=None, direction=None, lr700_adapter='prologix', lr700_port='COM3', lr700_gpib=17):
+             target_temp=None, direction=None, lr700_adapter='prologix', lr700_port=DEFAULT_LR700_PORT, lr700_gpib=17):
     print(f"Starting data logging every {logging_interval_s} second(s) from {temp_source}... Press Ctrl+C to stop.")
 
     try:
@@ -116,7 +118,7 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
 
 def main(save_dir, device_name, temp_source_choice, logging_interval_s=1,
          stop_event=None, target_temp=None, direction=None,
-         lr700_adapter='prologix', lr700_port='COM3', lr700_gpib=17):
+         lr700_adapter='prologix', lr700_port=DEFAULT_LR700_PORT, lr700_gpib=17):
 
     if not save_dir:
         save_dir = ROOT_DIR / "Data" / datetime.datetime.now().strftime("%Y%m%d")
