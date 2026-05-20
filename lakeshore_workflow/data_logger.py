@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import csv
 import datetime
 import os
 import sys
@@ -68,13 +67,6 @@ def log_data(
     except Exception as exc:
         print(f"Error initializing NpyAppendArray: {exc}")
         return
-
-    # Open a parallel CSV file with the same stem
-    csv_path = Path(filename).with_suffix(".csv")
-    csv_file = open(csv_path, "a", newline="", encoding="utf-8")
-    csv_writer = csv.writer(csv_file)
-    if csv_path.stat().st_size == 0:
-        csv_writer.writerow(["time_s", "t_K", "r_ohm", "x_ohm", "p_uW"])
 
     import lr700 as pyvisa_lr700
 
@@ -174,8 +166,6 @@ def log_data(
                     f"Time: {current_time:.2f}s"
                 )
                 npaa.append(entry)
-                csv_writer.writerow([current_time, t, r, x, power_uW])
-                csv_file.flush()
                 time.sleep(logging_interval_s)
             except KeyboardInterrupt:
                 print("\nCtrl+C detected. Stopping data logging and closing file.")
@@ -185,7 +175,6 @@ def log_data(
                 time.sleep(logging_interval_s * 2)
     finally:
         npaa.close()
-        csv_file.close()
 
 
 def main(

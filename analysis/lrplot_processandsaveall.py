@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pathlib
+import csv
 from scipy.signal import savgol_filter, find_peaks
 from scipy.ndimage import gaussian_filter1d
 import pandas as pd
@@ -153,6 +154,27 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
                 direction = 'Up'
             else:
                 direction = 'Down'
+
+            # Export raw data as CSV alongside the .npy file
+            csv_path = npy.with_suffix('.csv')
+            has_x = 'x_ohm' in data.dtype.names
+            with open(csv_path, 'w', newline='', encoding='utf-8') as cf:
+                writer = csv.writer(cf)
+                if has_x:
+                    writer.writerow(['time_s', 't_K', 'r_ohm', 'x_ohm', 'p_uW'])
+                    for i in range(len(data)):
+                        writer.writerow([
+                            data['time_s'][i], data['t_K'][i],
+                            data['r_ohm'][i], data['x_ohm'][i], data['p_uW'][i]
+                        ])
+                else:
+                    writer.writerow(['time_s', 't_K', 'r_ohm', 'p_uW'])
+                    for i in range(len(data)):
+                        writer.writerow([
+                            data['time_s'][i], data['t_K'][i],
+                            data['r_ohm'][i], data['p_uW'][i]
+                        ])
+            print(f'  CSV saved: {csv_path.name}')
 
             # Group and sort for analysis
             df = pd.DataFrame({
