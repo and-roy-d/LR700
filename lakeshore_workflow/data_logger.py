@@ -145,10 +145,8 @@ def log_data(
                 # 3. Read Bluefors power if requested
                 if log_bf_power and bf_ip:
                     try:
-                        import bftc
-                        bftc.ip = bf_ip
-                        import bftc_workflow.ramp_heater as bf_ramp_heater
-                        p = bf_ramp_heater.get_latest_heater_power_uW()
+                        from bftc_workflow.bftc import BFTC
+                        p = BFTC(bf_ip).get_latest_heater_power_uW()
                         if p is not None:
                             power_uW = p
                     except Exception as e:

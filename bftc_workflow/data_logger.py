@@ -10,7 +10,7 @@ if str(ROOT_DIR) not in sys.path:
 
 DEFAULT_LR700_PORT = "COM14" if sys.platform.startswith("win") else "/dev/ttyUSB0"
 
-import bftc
+from bftc import BFTC
 import datetime
 import os
 import time
@@ -19,14 +19,17 @@ from npy_append_array import NpyAppendArray
 import ramp_heater
 
 def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
-             target_temp=None, direction=None, lr700_adapter='prologix', lr700_port=DEFAULT_LR700_PORT, lr700_gpib=17):
-    print(f"Starting data logging every {logging_interval_s} second(s) from {temp_source}... Press Ctrl+C to stop.")
+             target_temp=None, direction=None, lr700_adapter='prologix',
+             lr700_port=DEFAULT_LR700_PORT, lr700_gpib=17, bf_ip=None):
+    print(f"Starting data logging every {logging_interval_s} second(s) from channel {temp_source}... Press Ctrl+C to stop.")
 
     try:
         npaa = NpyAppendArray(filename)
     except Exception as e:
         print(f"Error initializing NpyAppendArray: {e}")
         return
+
+    bf = BFTC(bf_ip) if bf_ip else BFTC()
 
     from contextlib import ExitStack
     import lr700 as pyvisa_lr700
@@ -56,25 +59,15 @@ def log_data(temp_source, filename, logging_interval_s=1, stop_event=None,
                     else:
                         r = pyvisa_lr700.read_ohm(lr700_gpib)
 
-                    if temp_source == 'scepter':
-                        bftc.turn_off_all_but_scepter()
-                        t = bftc.read_scepter_temperature()
-                    elif temp_source == 'mxc':
-                        bftc.turn_off_all_but_mxc()
-                        t = bftc.read_mxc_temperature()
-                    else:
-                        try:
-                            ch = int(temp_source)
-                            history = bftc.get_temp_history(ch=ch, start_minutes_ago=2)
-                            t_list = history.get("measurements", {}).get("temperature", [])
-                            t = t_list[-1] if t_list else None
-                        except:
-                            print(f"Invalid temperature source '{temp_source}'. Skipping cycle.")
-                            time.sleep(logging_interval_s)
-                            continue
+                    # Read temperature from BFTC channel
+                    try:
+                        ch = int(temp_source)
+                    except (ValueError, TypeError):
+                        ch = 6
+                    t = bf.get_temperature(ch)
 
                     current_time = time.time()
-                    power_uW = ramp_heater.get_latest_heater_power_uW()
+                    power_uW = bf.get_latest_heater_power_uW() or 0.0
 
                     if r is None:
                         print("Warning: Failed LR700 read. Skipping this data point.")

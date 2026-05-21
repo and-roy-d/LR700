@@ -493,21 +493,14 @@ def toggle_solo_channel(solo_val, bf_source, bf_ip):
     """Turn off all channels except the selected one, or restore all."""
     print(f"[Solo CB] solo_val={solo_val!r}, bf_source={bf_source!r}, bf_ip={bf_ip!r}")
     try:
-        bftc.ip = bf_ip
+        from bftc_workflow.bftc import BFTC
+        bf = BFTC(bf_ip) if bf_ip else BFTC()
         bf_source = int(bf_source)
         if solo_val and 'solo' in solo_val:
-            all_channels = [1, 2, 5, 6]
-            for ch in all_channels:
-                if ch != bf_source:
-                    print(f"  Turning OFF ch {ch}")
-                    bftc.turn_off(ch)
-                else:
-                    print(f"  Turning ON  ch {ch}")
-                    bftc.turn_on(ch)
+            bf.solo_channel(bf_source)
             return f"Solo CH {bf_source} — others disabled"
         else:
-            print("  Restoring all channels")
-            bftc.turn_on_all()
+            bf.enable_all_channels()
             return "All channels re-enabled"
     except Exception as e:
         print(f"  ERROR: {e}")

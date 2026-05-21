@@ -3,6 +3,7 @@ import time
 import sys
 import numpy as np
 from pathlib import Path
+from bftc_workflow.bftc import BFTC
 
 # Add workflows to path
 THIS_DIR = Path(__file__).resolve().parent
@@ -69,10 +70,7 @@ class RampController:
 
         if instrument == "Myriad/Miniebit":
             import bftc_workflow.data_logger as bf_logger
-            
-            if 'bf_ip' in kwargs:
-                bftc.ip = kwargs['bf_ip']
-            
+
             ch = kwargs.get('bf_source', 6)
             try:
                 ch = int(ch)
@@ -90,6 +88,7 @@ class RampController:
                     "lr700_adapter": kwargs.get('lr700_adapter', 'prologix'),
                     "lr700_port": kwargs.get('lr700_port', DEFAULT_LR700_PORT),
                     "lr700_gpib": kwargs.get('lr700_gpib', 17),
+                    "bf_ip": kwargs.get('bf_ip'),
                 }),
                 daemon=True
             )
@@ -158,9 +157,8 @@ class RampController:
         # 2. Check Instrument
         if instrument == "Myriad/Miniebit":
             source = kwargs.get('bf_source', 6)
-            if 'bf_ip' in kwargs:
-                bftc.ip = kwargs['bf_ip']
-            temp = self._get_bf_temp(source)
+            bf_ip = kwargs.get('bf_ip')
+            temp = self._get_bf_temp(source, bf_ip)
             if temp is not None:
                 res_parts.append(f"BFTC: {temp*1000:.2f} mK.")
             else:
@@ -220,7 +218,7 @@ class RampController:
         if self.state in ["RAMPING", "PAUSED"]:
             return False, "Already running"
 
-        bftc.ip = bf_ip
+        self._bf_ip = bf_ip
         self.instrument = "Myriad/Miniebit"
         self.state = "RAMPING"
         self.stop_event.clear()
@@ -336,7 +334,7 @@ class RampController:
 
         if self.instrument == "Myriad/Miniebit":
             try:
-                bftc.set_heaterpower(0.0)
+                BFTC(getattr(self, '_bf_ip', None) or '169.169.10.10:5001').set_heater_power(0.0)
             except:
                 pass
         elif self.instrument in ["KPAC", "2120 OG"]:
@@ -353,14 +351,11 @@ class RampController:
                 print(f"Error shutting off heater in stop(): {e}")
         
         return True, "Stopped"
-    def _get_bf_temp(self, source):
+    def _get_bf_temp(self, source, bf_ip=None):
         try:
             ch = int(source)
-            history = bftc.get_temp_history(ch=ch, start_minutes_ago=2, stop_minutes_ago=0)
-            temps = history.get("measurements", {}).get("temperature", [])
-            if temps:
-                return temps[-1]
-            return None
+            bf = BFTC(bf_ip) if bf_ip else BFTC()
+            return bf.get_temperature(ch)
         except Exception as e:
             print(f"Error getting temp for channel {source}: {e}")
             return None
@@ -370,10 +365,11 @@ class RampController:
             p_set = init_power
             start_time = time.time()
             
-            base_temp = self._get_bf_temp(source)
+            bf = BFTC(self._bf_ip) if getattr(self, '_bf_ip', None) else BFTC()
+            base_temp = self._get_bf_temp(source, getattr(self, '_bf_ip', None))
             self.current_temp = base_temp
             self.current_power_or_setpoint = p_set
-            
+
             direction = "up" if base_temp < self._bf_target_temp else "down"
 
             while not self.stop_event.is_set():
@@ -384,10 +380,10 @@ class RampController:
                 if time.time() - start_time > timeout:
                     self.state = "ERROR"
                     self.message = "Timeout reached"
-                    bftc.set_heaterpower(0.0)
+                    bf.set_heater_power(0.0)
                     break
 
-                base_temp = self._get_bf_temp(source)
+                base_temp = self._get_bf_temp(source, getattr(self, '_bf_ip', None))
                 self.current_temp = base_temp
                 self.current_power_or_setpoint = p_set
                 self.message = f"Ramping {direction}... Temp: {base_temp*1000:.2f} mK, Power: {p_set*1e6:.2f} uW"
@@ -409,7 +405,7 @@ class RampController:
                 p_set = max(0, min(p_set, self._bf_max_power))
                 p_set = round(p_set, 9)
                 
-                bftc.set_heaterpower(p_set)
+                bf.set_heater_power(p_set)
                 
                 sleep_elapsed = 0
                 while sleep_elapsed < self._bf_sleep_time and not self.stop_event.is_set() and not self.pause_event.is_set():
@@ -420,7 +416,7 @@ class RampController:
             self.state = "ERROR"
             self.message = f"Myriad error: {e}"
             try:
-                bftc.set_heaterpower(0.0)
+                bf.set_heater_power(0.0)
             except:
                 pass
 
