@@ -81,8 +81,25 @@ Open-loop heater control via a **Lake Shore 370** (manual output percentage `MOU
 ---
 
 ### 3. Post-Ramp Data Processing & Analysis
-Once you have collected your `.npy` data logs under the `Data/` directory, use the automated signal-processing utilities in `analysis/` to process the files, collapse staircase noise, find transition temperatures ($T_c$), and export publication-ready plots:
+Once you have collected your `.npy` data logs under the `Data/` directory, use the automated post-processing utilities in the `analysis/` folder to filter data, collapse staircase steps, extract critical temperatures ($T_c$), and generate publication-quality figures:
+
+#### A. Standard Cooldown Processing & Plotting
+To batch-process standard measurements across all devices:
 ```bash
 python analysis/lrplot_processandsaveall.py
 ```
-*(The scripts inside `analysis/` automatically search the project root's `Data/` folder by default, regardless of what folder you launch them from.)*
+This automatically corrects staircase noise using the shift-collapsing algorithm, extracts the superconducting transitions, and saves separate CSV summaries and SVG/PNG plots.
+
+#### B. Field-Dependent $T_c$ Analysis (New)
+To analyze superconducting transitions under different applied magnetic fields, use the field-dependent script:
+```bash
+python analysis/field_dependent_tc.py                 # Defaults to today's date
+python analysis/field_dependent_tc.py --date 20260522 # Run on an editable target date
+```
+* **Current & Field Parsing**: Extracts the applied magnet current from file labels like `Coil0A1` (denoting `0.1` A, where `A` is the decimal point).
+* **Calibration**: Computes the external magnetic field $B_{ext}$ using a slope of **$87\text{ }\mu\text{T/A}$** ($B_{ext} = I \times 87$).
+* **Device Grouping**: Automatically clusters measurement sweeps by device (e.g. `F1`).
+* **Multi-Field Plotting**: Renders all curves for the same device on a single high-performance chart using the vibrant `plasma` color spectrum.
+* **Transition Finding & Marking**: Performs noise-filtering and gradient-based transition detection to locate $T_c$, drawing colored vertical dashed lines and labels.
+* **Summary Exports**: Produces a summary spreadsheet (`tc_vs_bext_summary.csv`) and a beautiful phase boundary plot (`Tc_vs_Bext_summary.png`) under the active date's `field_analysis/` folder.
+
