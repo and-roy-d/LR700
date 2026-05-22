@@ -195,7 +195,12 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
             html.Div(className="input-group", children=[
                 html.Label("Thermometer Source (Channel)"),
                 dcc.Dropdown(id='bf-source', 
-                             options=[{'label': f'Channel {i}', 'value': i} for i in [1, 2, 5, 6]], 
+                             options=[
+                                 {'label': 'CH 1 (40 K flange)', 'value': 1},
+                                 {'label': 'CH 2 (4 K flange)', 'value': 2},
+                                 {'label': 'CH 5 (Still flange)', 'value': 5},
+                                 {'label': 'CH 6 (MXC flange)', 'value': 6}
+                             ], 
                              value=6, 
                              clearable=False, style={"color":"#000"})
             ]),
@@ -904,4 +909,36 @@ def update_plots(n, x_key, y_key):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False, port=8052)
+    import argparse
+    import sys
+    import threading
+    import time
+
+    parser = argparse.ArgumentParser(description="Tc Checker Control App")
+    parser.add_argument("--port", type=int, default=8052, help="Port to run on (default: 8052)")
+    parser.add_argument("--gui", action="store_true", help="Launch in a standalone desktop window")
+    args = parser.parse_args()
+
+    if args.gui:
+        try:
+            import webview
+        except ImportError:
+            print("Error: pywebview is not installed. Please run:\n  pip install pywebview", file=sys.stderr)
+            sys.exit(1)
+
+        # Run Dash server in background thread
+        server_thread = threading.Thread(
+            target=app.run,
+            kwargs={"debug": False, "use_reloader": False, "port": args.port},
+            daemon=True
+        )
+        server_thread.start()
+
+        # Wait a moment for server to spin up
+        time.sleep(1.5)
+
+        print("Launching native GUI window...")
+        webview.create_window("Tc Checker Control", f"http://127.0.0.1:{args.port}")
+        webview.start()
+    else:
+        app.run(debug=True, use_reloader=False, port=args.port)

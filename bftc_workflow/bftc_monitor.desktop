@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=BFTC Temp Monitor
+Comment=Standalone 4-Channel Temperature Monitor & PID Regulator
+# Dynamically resolves the script directory relative to the desktop file using %k
+Exec=bash -c "cd \$(dirname %k) && chmod +x ./run_monitor.sh && ./run_monitor.sh --gui"
+Icon=utilities-system-monitor
+Terminal=true
+Categories=Science;Utility;Development;
+StartupNotify=true
