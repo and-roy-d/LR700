@@ -312,7 +312,7 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 if __name__ == "__main__":
     from datetime import datetime
 
-    date = "20260520"
+    date = "20260521"
     ruox_installed = True
     date_obj = datetime.strptime(date, "%Y%m%d")
     ruox_change_date = datetime.strptime("20250821", "%Y%m%d")
