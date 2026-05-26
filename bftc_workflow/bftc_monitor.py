@@ -161,7 +161,7 @@ class BFTC:
 # Shared in-memory store  (background thread writes, Dash callbacks read)
 # ---------------------------------------------------------------------------
 
-MAX_POINTS = 1440   # keep last 24 h at 1-min resolution
+MAX_POINTS = 20000   # large buffer for 10s resolution logs over 24+ hours
 
 class DataStore:
     def __init__(self, channels: list[int]):
@@ -179,6 +179,11 @@ class DataStore:
         # Logging configuration
         self.write_logs: bool = True
         self.log_dir: str = str(Path.home() / "bftc_logs")
+
+        # Dynamic Configurations
+        self.time_offset_hours: float = -1.0  # adjust timezone / DST discrepancy (defaults to -1.0)
+        self.plot_window_minutes: float = 1440.0 # how much history to display (default 24h)
+        self.poll_interval: int = 10          # default logging interval in seconds
 
         # Channel scan configurations
         self.channel_active: dict[int, bool] = {ch: True for ch in channels}
@@ -199,6 +204,106 @@ class DataStore:
 
         # BFTC Scanner IP
         self.bftc_ip: str = "169.169.10.10:5001"
+
+    def load_history_from_logs(self) -> None:
+        """Pre-populate memory deques from existing CSV files within the 24h window."""
+        with self.lock:
+            # Clear existing data first
+            self.timestamps.clear()
+            for ch in self.series:
+                self.series[ch].clear()
+            self.heater_series.clear()
+            self.still_heater_series.clear()
+
+            log_path = Path(self.log_dir)
+            if not log_path.exists():
+                print(f"Log directory '{log_path}' does not exist. Starting fresh.")
+                return
+
+            print(f"Scanning '{log_path}' to pre-load 24h history...")
+            # Calculate 24h cutoff using the current offset
+            now_adjusted = datetime.now() + timedelta(hours=self.time_offset_hours)
+            cutoff = now_adjusted - timedelta(hours=24)
+
+            # Target date folders for the last 3 days to cover 24h reliably
+            target_dates = [
+                (now_adjusted - timedelta(days=d)).strftime("%Y-%m-%d")
+                for d in range(2, -1, -1)
+            ]
+
+            all_files = []
+            for date_str in target_dates:
+                date_dir = log_path / date_str
+                if date_dir.exists():
+                    all_files.extend(list(date_dir.glob("bftc_monitor_*.csv")))
+
+            all_files.sort()
+            data_points = []
+
+            for filepath in all_files:
+                try:
+                    with open(filepath, "r", newline="", encoding="utf-8") as f:
+                        reader = csv.reader(f)
+                        header = next(reader, None)
+                        if not header:
+                            continue
+
+                        try:
+                            ts_idx = header.index("timestamp")
+                        except ValueError:
+                            continue
+
+                        ch_indices = {}
+                        for ch in self.series.keys():
+                            col_name = f"ch{ch}_mK"
+                            if col_name in header:
+                                ch_indices[ch] = header.index(col_name)
+
+                        mxc_idx = header.index("mxc_heater_uW") if "mxc_heater_uW" in header else None
+                        still_idx = header.index("still_heater_uW") if "still_heater_uW" in header else None
+
+                        for row in reader:
+                            if not row:
+                                continue
+                            try:
+                                ts_str = row[ts_idx]
+                                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+
+                                # Ignore points older than 24h
+                                if ts < cutoff:
+                                    continue
+
+                                readings = {}
+                                for ch, idx in ch_indices.items():
+                                    val_str = row[idx]
+                                    # Convert CSV mK back to K for in-memory store
+                                    readings[ch] = float(val_str) / 1000.0 if val_str else None
+
+                                mxc_val = float(row[mxc_idx]) if (mxc_idx is not None and row[mxc_idx]) else None
+                                still_val = float(row[still_idx]) if (still_idx is not None and row[still_idx]) else None
+
+                                data_points.append((ts, readings, mxc_val, still_val))
+                            except Exception:
+                                pass
+                except Exception as e:
+                    print(f"Error reading log file {filepath}: {e}", file=sys.stderr)
+
+            # Sort and append up to maximum capacity
+            data_points.sort(key=lambda x: x[0])
+            appended_count = 0
+            for ts, readings, mxc_val, still_val in data_points[-self.timestamps.maxlen:]:
+                self.timestamps.append(ts)
+                for ch, val in readings.items():
+                    if ch in self.series:
+                        self.series[ch].append(val)
+                self.heater_series.append(mxc_val)
+                self.still_heater_series.append(still_val)
+                self.last_row = readings
+                self.last_heater = mxc_val
+                self.last_still_heater = still_val
+                appended_count += 1
+
+            print(f"Successfully pre-loaded {appended_count} data points from CSV logs.")
 
     def append(self, ts: datetime, readings: dict[int, float | None], mxc_heater_uW: float | None, still_heater_uW: float | None) -> None:
         with self.lock:
@@ -236,6 +341,9 @@ class DataStore:
                 self.log_dir,
                 dict(self.channel_active),
                 self.bftc_ip,
+                self.time_offset_hours,
+                self.plot_window_minutes,
+                self.poll_interval,
             )
 
     def get_bftc_ip(self) -> str:
@@ -281,6 +389,30 @@ class DataStore:
                 self.still_reg_setpoint_mK = setpoint_mK
                 self.still_reg_channel = channel
 
+    def get_time_offset(self) -> float:
+        with self.lock:
+            return self.time_offset_hours
+
+    def set_time_offset(self, val: float) -> None:
+        with self.lock:
+            self.time_offset_hours = val
+
+    def get_plot_window(self) -> float:
+        with self.lock:
+            return self.plot_window_minutes
+
+    def set_plot_window(self, val: float) -> None:
+        with self.lock:
+            self.plot_window_minutes = val
+
+    def get_poll_interval(self) -> int:
+        with self.lock:
+            return self.poll_interval
+
+    def set_poll_interval(self, val: int) -> None:
+        with self.lock:
+            self.poll_interval = val
+
 
 # ---------------------------------------------------------------------------
 # CSV logger
@@ -313,7 +445,9 @@ def poll_loop(bf: BFTC, channels: list[int], interval: int,
     current_date_str = None
 
     while not stop_event.is_set():
-        ts = datetime.now()
+        # Get active time offset and calculate corrected local timestamp
+        offset = store.get_time_offset()
+        ts = datetime.now() + timedelta(hours=offset)
         elapsed = round(time.time() - start_time, 1)
         readings: dict[int, float | None] = {}
 
@@ -423,8 +557,10 @@ def poll_loop(bf: BFTC, channels: list[int], interval: int,
                 current_log_dir = None
                 current_date_str = None
 
-        print(f"Next poll in {interval}s\n")
-        stop_event.wait(timeout=interval)
+        # Sleep for dynamic poll interval
+        active_interval = store.get_poll_interval()
+        print(f"Next poll in {active_interval}s\n")
+        stop_event.wait(timeout=active_interval)
 
     if current_fh is not None:
         try:
@@ -670,6 +806,116 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
                             )
                         ]
                     )
+                ]
+            ),
+
+            # Secondary Control & Settings Bar
+            html.Div(
+                style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "gap": "20px",
+                    "backgroundColor": "#ffffff",
+                    "borderRadius": "12px",
+                    "padding": "12px 20px",
+                    "marginBottom": "20px",
+                    "border": "1px solid #e2e8f0",
+                    "boxShadow": "0 1px 3px rgba(0,0,0,0.05)",
+                    "flexWrap": "wrap"
+                },
+                children=[
+                    # Time Window (Minutes)
+                    html.Div(
+                        style={"display": "flex", "alignItems": "center", "gap": "10px"},
+                        children=[
+                            html.Span("Plot Window (mins):", style={"color": "#475569", "fontSize": "13px", "fontWeight": 600}),
+                            dcc.Input(
+                                id="plot-window-input",
+                                type="text",
+                                value=str(int(store.get_plot_window())),
+                                style={
+                                    "backgroundColor": "#ffffff",
+                                    "color": "#0f172a",
+                                    "border": "1px solid #cbd5e1",
+                                    "borderRadius": "6px",
+                                    "padding": "6px 12px",
+                                    "width": "100px",
+                                    "fontSize": "13px",
+                                    "height": "34px",
+                                    "boxSizing": "border-box"
+                                }
+                            ),
+                        ]
+                    ),
+
+                    # Time Offset (Hours)
+                    html.Div(
+                        style={"display": "flex", "alignItems": "center", "gap": "10px"},
+                        children=[
+                            html.Span("Time Offset (hours):", style={"color": "#475569", "fontSize": "13px", "fontWeight": 600}),
+                            dcc.Input(
+                                id="time-offset-input",
+                                type="text",
+                                value=str(store.get_time_offset()),
+                                style={
+                                    "backgroundColor": "#ffffff",
+                                    "color": "#0f172a",
+                                    "border": "1px solid #cbd5e1",
+                                    "borderRadius": "6px",
+                                    "padding": "6px 12px",
+                                    "width": "100px",
+                                    "fontSize": "13px",
+                                    "height": "34px",
+                                    "boxSizing": "border-box"
+                                }
+                            ),
+                        ]
+                    ),
+
+                    # Poll / Log Interval (Seconds)
+                    html.Div(
+                        style={"display": "flex", "alignItems": "center", "gap": "10px"},
+                        children=[
+                            html.Span("Log Interval (s):", style={"color": "#475569", "fontSize": "13px", "fontWeight": 600}),
+                            dcc.Input(
+                                id="poll-interval-input",
+                                type="text",
+                                value=str(store.get_poll_interval()),
+                                style={
+                                    "backgroundColor": "#ffffff",
+                                    "color": "#0f172a",
+                                    "border": "1px solid #cbd5e1",
+                                    "borderRadius": "6px",
+                                    "padding": "6px 12px",
+                                    "width": "100px",
+                                    "fontSize": "13px",
+                                    "height": "34px",
+                                    "boxSizing": "border-box"
+                                }
+                            ),
+                        ]
+                    ),
+
+                    # Reload History Button
+                    html.Button(
+                        "Reload History from Logs",
+                        id="reload-history-btn",
+                        n_clicks=0,
+                        style={
+                            "backgroundColor": "#6366f1",
+                            "color": "#ffffff",
+                            "border": "none",
+                            "borderRadius": "6px",
+                            "padding": "0 16px",
+                            "fontWeight": "600",
+                            "fontSize": "13px",
+                            "cursor": "pointer",
+                            "height": "34px",
+                            "marginLeft": "auto",
+                            "transition": "background-color 0.2s"
+                        }
+                    ),
+                    html.Span(id="reload-status-span", style={"fontSize": "12px", "color": "#10b981", "fontWeight": 500, "marginLeft": "4px"})
                 ]
             ),
 
@@ -1136,14 +1382,37 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
             last_mxc_heater, last_still_heater,
             mxc_reg_active, mxc_pid_mode, mxc_manual_power_uW, mxc_reg_setpoint_mK, mxc_reg_channel,
             still_reg_active, still_pid_mode, still_manual_power_uW, still_reg_setpoint_mK, still_reg_channel,
-            write_logs, log_dir, channel_active, _bftc_ip
+            write_logs, log_dir, channel_active, _bftc_ip,
+            time_offset_hours, plot_window_minutes, poll_interval
         ) = store.snapshot()
+
+        # Filter data points to match plot_window_minutes
+        if timestamps:
+            cutoff_time = timestamps[-1] - timedelta(minutes=plot_window_minutes)
+            
+            # Find the starting index that is within the plot window
+            idx = 0
+            for i, ts in enumerate(timestamps):
+                if ts >= cutoff_time:
+                    idx = i
+                    break
+            
+            # Slice all arrays from idx to the end
+            timestamps_filtered = list(timestamps)[idx:]
+            series_filtered = {ch: list(vals)[idx:] for ch, vals in series.items()}
+            mxc_heater_series_filtered = list(mxc_heater_series)[idx:] if mxc_heater_series else []
+            still_heater_series_filtered = list(still_heater_series)[idx:] if still_heater_series else []
+        else:
+            timestamps_filtered = []
+            series_filtered = {ch: [] for ch in series}
+            mxc_heater_series_filtered = []
+            still_heater_series_filtered = []
 
         # Generate individual Plots
         def make_figure(ch: int, temp_series: list, title: str, color: str, unit: str, heater_trace=None):
             traces = [
                 go.Scatter(
-                    x=timestamps,
+                    x=timestamps_filtered,
                     y=temp_series,
                     mode="lines+markers",
                     name="Temperature",
@@ -1210,38 +1479,20 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
 
         # Generate individual traces and graphs
         # CH 1: 40 K (K)
-        ch1_temps = series.get(1, [])
+        ch1_temps = series_filtered.get(1, [])
         fig_ch1 = make_figure(1, ch1_temps, "CH 1 (40 K Flange) Temperature", "#ef4444", "K")
 
         # CH 2: 4 K (K)
-        ch2_temps = series.get(2, [])
+        ch2_temps = series_filtered.get(2, [])
         fig_ch2 = make_figure(2, ch2_temps, "CH 2 (4 K Flange) Temperature", "#22c55e", "K")
 
         # CH 5: Still (mK)
-        ch5_temps_mK = [v * 1000.0 if v is not None else None for v in series.get(5, [])]
-        ch5_heater_trace = go.Scatter(
-            x=timestamps,
-            y=still_heater_series,
-            mode="lines",
-            name="Still Heater (HT 1)",
-            yaxis="y2",
-            line=dict(color="#ec4899", width=1.5, dash="dash"),
-            hovertemplate="%{x|%H:%M:%S}<br><b>%{y:.2f} µW</b><extra></extra>"
-        ) if still_heater_series else None
-        fig_ch5 = make_figure(5, ch5_temps_mK, "CH 5 (Still Flange) Temperature & Heater Power", "#ca8a04", "mK", ch5_heater_trace)
+        ch5_temps_mK = [v * 1000.0 if v is not None else None for v in series_filtered.get(5, [])]
+        fig_ch5 = make_figure(5, ch5_temps_mK, "CH 5 (Still Flange) Temperature", "#ca8a04", "mK", None)
 
         # CH 6: MXC (mK)
-        ch6_temps_mK = [v * 1000.0 if v is not None else None for v in series.get(6, [])]
-        ch6_heater_trace = go.Scatter(
-            x=timestamps,
-            y=mxc_heater_series,
-            mode="lines",
-            name="MXC Heater (HT 4)",
-            yaxis="y2",
-            line=dict(color="#f59e0b", width=1.5, dash="dash"),
-            hovertemplate="%{x|%H:%M:%S}<br><b>%{y:.2f} µW</b><extra></extra>"
-        ) if mxc_heater_series else None
-        fig_ch6 = make_figure(6, ch6_temps_mK, "CH 6 (MXC Flange) Temperature & Heater Power", "#3b82f6", "mK", ch6_heater_trace)
+        ch6_temps_mK = [v * 1000.0 if v is not None else None for v in series_filtered.get(6, [])]
+        fig_ch6 = make_figure(6, ch6_temps_mK, "CH 6 (MXC Flange) Temperature", "#3b82f6", "mK", None)
 
         # Format Card Readings
         def format_temp_card(ch: int):
@@ -1428,15 +1679,76 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
             return "still-tab"
         return current_tab
 
-    # 5. Logging controls callback
+    # 5. Logging and custom settings callback
     @app.callback(
+        Output("reload-status-span", "children"),
         Input("write-log-checkbox", "value"),
-        Input("log-location-dropdown", "value")
+        Input("log-location-dropdown", "value"),
+        Input("plot-window-input", "value"),
+        Input("time-offset-input", "value"),
+        Input("reload-history-btn", "n_clicks"),
+        prevent_initial_call=False
     )
-    def update_logging_configs(write_val, location_val):
+    def update_settings_and_reload(write_val, location_val, plot_window, time_offset, reload_clicks):
+        ctx = callback_context
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else ""
+
+        # Update logging configs
         write_enabled = "write" in write_val if write_val else False
         if location_val:
+            _, old_log_dir = store.get_logging_config()
             store.set_logging_config(write_enabled, location_val)
+            # If log directory changed, trigger history reload
+            if triggered_id == "log-location-dropdown" and old_log_dir != location_val:
+                try:
+                    store.load_history_from_logs()
+                    return f"Log dir changed. Loaded history from: {location_val}"
+                except Exception as e:
+                    return f"Error loading new log history: {e}"
+
+        # Update plot window
+        if plot_window is not None:
+            try:
+                val = float(plot_window)
+                if val >= 1:
+                    store.set_plot_window(val)
+            except ValueError:
+                pass
+
+        # Update time offset
+        if time_offset is not None:
+            try:
+                val = float(time_offset)
+                store.set_time_offset(val)
+            except ValueError:
+                pass
+
+        # Manual reload button click
+        if triggered_id == "reload-history-btn" and reload_clicks:
+            try:
+                store.load_history_from_logs()
+                return "History successfully reloaded!"
+            except Exception as e:
+                return f"Reload error: {e}"
+
+        return ""
+
+    # 5b. Log/poll Interval settings callback
+    @app.callback(
+        Output("interval", "interval"),
+        Input("poll-interval-input", "value"),
+        prevent_initial_call=True
+    )
+    def update_interval_property(poll_sec):
+        if poll_sec:
+            try:
+                val = int(float(poll_sec))
+                if val >= 1:
+                    store.set_poll_interval(val)
+                    return val * 1000
+            except ValueError:
+                pass
+        return 10000 # fallback to 10s
 
     # 6. Heater Master Active Toggles in bottom tabs callback
     @app.callback(
@@ -1639,8 +1951,8 @@ def main():
                         help="BFTC IP:port  (default: 169.169.10.10:5001)")
     parser.add_argument("--channels", nargs="+", type=int, default=[1, 2, 5, 6],
                         help="Channel numbers  (default: 1 2 5 6)")
-    parser.add_argument("--interval", type=int, default=60,
-                        help="Poll interval in seconds  (default: 60)")
+    parser.add_argument("--interval", type=int, default=10,
+                        help="Poll interval in seconds  (default: 10)")
     parser.add_argument("--log-dir", type=Path, default=Path.home() / "bftc_logs",
                         help="CSV log directory  (default: ~/bftc_logs)")
     parser.add_argument("--port", type=int, default=8050,
@@ -1657,6 +1969,13 @@ def main():
     
     # Initialize background logging path/configs
     store.set_logging_config(True, str(args.log_dir))
+    store.set_poll_interval(args.interval)
+
+    # Automatically pre-load history from existing log files on startup
+    try:
+        store.load_history_from_logs()
+    except Exception as e:
+        print(f"Error loading logs on startup: {e}", file=sys.stderr)
     
     start_time = time.time()
     stop_event = threading.Event()
