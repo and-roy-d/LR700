@@ -49,7 +49,7 @@ os.environ.setdefault("NO_PROXY", "169.169.10.10,132.163.157.220,localhost,127.0
 # ---------------------------------------------------------------------------
 
 class BFTC:
-    def __init__(self, ip: str = "169.169.10.10:5001", timeout: float = 10.0):
+    def __init__(self, ip: str = "132.163.130.125:5001", timeout: float = 10.0):
         self.ip = ip
         self.timeout = timeout
 
@@ -203,7 +203,7 @@ class DataStore:
         self.still_reg_channel: int | None = None
 
         # BFTC Scanner IP
-        self.bftc_ip: str = "169.169.10.10:5001"
+        self.bftc_ip: str = "132.163.130.125:5001"
 
     def load_history_from_logs(self) -> None:
         """Pre-populate memory deques from existing CSV files within the 24h window."""
@@ -568,7 +568,8 @@ def poll_loop(bf: BFTC, channels: list[int], interval: int,
         except Exception:
             pass
     print("Poll thread stopped.")
-# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Dash application
 # ---------------------------------------------------------------------------
 
@@ -1947,8 +1948,8 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
 
 def main():
     parser = argparse.ArgumentParser(description="BFTC browser-based temperature monitor & regulator")
-    parser.add_argument("--ip", default="169.169.10.10:5001",
-                        help="BFTC IP:port  (default: 169.169.10.10:5001)")
+    parser.add_argument("--ip", default="132.163.130.125:5001",
+                        help="BFTC IP:port  (default: 132.163.130.125:5001)")
     parser.add_argument("--channels", nargs="+", type=int, default=[1, 2, 5, 6],
                         help="Channel numbers  (default: 1 2 5 6)")
     parser.add_argument("--interval", type=int, default=10,
