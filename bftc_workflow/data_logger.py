@@ -67,7 +67,7 @@ def log_data(
             print(f"Warning: Failed to initialize pyvisa_lr700: {exc}")
 
     try:
-        bf = BFTC(bf_ip, timeout=2.0) if bf_ip else BFTC(timeout=2.0)
+        bf = BFTC(bf_ip, timeout=5.0) if bf_ip else BFTC(timeout=5.0)
     except Exception as exc:
         print(f"Warning: Failed to initialize BFTC client: {exc}")
         bf = None
@@ -118,9 +118,14 @@ def log_data(
                     except Exception as exc:
                         print(f"Warning: Failed to read BFTC CH{ch} temperature: {exc}")
 
+                    # Read heater power: prioritize active ramp setpoint if available
                     try:
-                        p_val = bf.get_latest_heater_power_uW()
-                        power_uW = p_val if p_val is not None else 0.0
+                        from ramp_controller import controller
+                        if controller.state in ("RAMPING", "PAUSED") and controller.instrument == "Myriad/Miniebit" and controller.current_power_or_setpoint is not None:
+                            power_uW = float(controller.current_power_or_setpoint) * 1e6
+                        else:
+                            p_val = bf.get_latest_heater_power_uW(heater_nr=4, minutes=5.0)
+                            power_uW = p_val if p_val is not None else 0.0
                     except Exception as exc:
                         print(f"Warning: Failed to read BFTC heater power: {exc}")
                         power_uW = 0.0
