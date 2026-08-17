@@ -88,10 +88,10 @@ def collapse_staircase_fixed_shift(data):
     return out
 
 
-def find_transition_mK(T_K, R_mOhm, prominence=0.8, min_step_mOhm=10.0, max_width_mK=50.0) -> float | None:
-    """Finds the primary transition critical temperature (Tc) in mK."""
+def find_all_transitions_mK(T_K, R_mOhm, prominence=0.8, min_step_mOhm=10.0, max_width_mK=50.0) -> list[float]:
+    """Finds all transition critical temperatures (Tcs) in mK, sorted ascending."""
     if len(T_K) < 20:
-        return None
+        return []
 
     # Sort Data by Temperature
     idx = np.argsort(T_K)
@@ -110,7 +110,7 @@ def find_transition_mK(T_K, R_mOhm, prominence=0.8, min_step_mOhm=10.0, max_widt
     # Find peaks in gradient
     peaks, properties = find_peaks(dR_dn, prominence=prominence, height=0, width=1, distance=15)
 
-    edge_buffer = len(R) * 0.05
+    edge_buffer = 5
     valid_transitions = []
 
     for i, p in enumerate(peaks):
@@ -129,14 +129,11 @@ def find_transition_mK(T_K, R_mOhm, prominence=0.8, min_step_mOhm=10.0, max_widt
         step = R_n - R_sc
 
         if step >= min_step_mOhm and width_mK <= max_width_mK:
-            valid_transitions.append((p, T[p] * 1000.0, step))
+            valid_transitions.append(T[p] * 1000.0)
 
-    if not valid_transitions:
-        return None
+    # Return all transitions sorted ascending by temperature
+    return sorted(valid_transitions)
 
-    # Return the transition with the largest resistance step (most prominent)
-    valid_transitions.sort(key=lambda x: x[2], reverse=True)
-    return valid_transitions[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +186,7 @@ def parse_filename(filepath: pathlib.Path) -> tuple[str, float, str] | None:
 # Main Execution Pipeline
 # ---------------------------------------------------------------------------
 
-def analyze_field_dependence(date_str: str, data_root: pathlib.Path):
+def analyze_field_dependence(date_str: str, data_root: pathlib.Path, apply_correction: bool = False):
     date_folder = data_root / date_str
     if not date_folder.exists():
         print(f"Error: Data folder '{date_folder}' does not exist.")
@@ -250,17 +247,20 @@ def analyze_field_dependence(date_str: str, data_root: pathlib.Path):
         
         fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
         
-        # Color spectrum for fields
+        # Sequential high-contrast color spectrum for fields: Blue -> Teal -> Amber -> Red
         unique_bexts = sorted(list(set(run['bext'] for run in runs)))
-        cmap = plt.cm.plasma
         
-        # Let's map unique bexts to colors
         def get_color(bext_val):
-            if len(unique_bexts) <= 1:
-                return "tab:blue"
-            normalized = (bext_val - unique_bexts[0]) / (unique_bexts[-1] - unique_bexts[0] if unique_bexts[-1] != unique_bexts[0] else 1)
-            # Use middle range of plasma map to ensure readability
-            return cmap(0.1 + normalized * 0.7)
+            # Deep Blue, Teal, Amber/Orange, Crimson Red
+            colors = ["#1e40af", "#0d9488", "#d97706", "#dc2626"]
+            try:
+                idx_c = unique_bexts.index(bext_val)
+                if idx_c < len(colors):
+                    return colors[idx_c]
+                # Fallback to turbo colormap if there are many fields
+                return plt.cm.turbo(idx_c / len(unique_bexts))
+            except ValueError:
+                return "#1e40af"
 
         for run in runs:
             filepath = run['file']
@@ -278,31 +278,46 @@ def analyze_field_dependence(date_str: str, data_root: pathlib.Path):
                 T_mK = df['T_K'].values * 1000.0
                 R_mOhm = df['R_mOhm'].values
                 
-                # Apply staircase correction
-                R_corrected = collapse_staircase_fixed_shift(R_mOhm)
+                # Apply staircase correction with trend subtraction if enabled
+                if apply_correction:
+                    trend = estimate_local_trend_savgol(R_mOhm)
+                    R_corrected = collapse_staircase_fixed_shift(R_mOhm - trend) + trend
+                else:
+                    R_corrected = R_mOhm
                 
-                # Find Tc
-                tc_mK = find_transition_mK(df['T_K'].values, R_corrected)
+                # Find all Tcs
+                tcs_raw = find_all_transitions_mK(df['T_K'].values, R_corrected)
                 
-                # Plot raw data
+                # Align to nominal transitions for multi-layer devices to prevent noise from shifting indices
+                if dev in ['F1', 'A2']:
+                    nominals = [83.0, 110.0, 161.0]
+                    aligned_tcs = {}
+                    for tc in tcs_raw:
+                        best_idx = int(np.argmin([abs(tc - nom) for nom in nominals]))
+                        dist = abs(tc - nominals[best_idx])
+                        if dist < 25.0:
+                            if best_idx not in aligned_tcs or dist < abs(aligned_tcs[best_idx] - nominals[best_idx]):
+                                aligned_tcs[best_idx] = tc
+                    aligned_tcs_list = sorted([(idx + 1, tc) for idx, tc in aligned_tcs.items()])
+                else:
+                    aligned_tcs_list = [(idx + 1, tc) for idx, tc in enumerate(sorted(tcs_raw))]
+                
+                # Plot raw data as thin lines connected to light dots
                 color = get_color(bext)
                 label = f"$B_{{ext}}$ = {bext:.1f} µT ({direction})"
-                ax.plot(T_mK, R_corrected, '.', ms=4, color=color, alpha=0.6, label=label)
+                ax.plot(T_mK, R_corrected, 'o-', ms=3, lw=0.6, color=color, alpha=0.5, label=label)
                 
-                if tc_mK:
-                    print(f"  -> Bext = {bext:.1f} uT: Found Tc = {tc_mK:.2f} mK")
-                    ax.axvline(tc_mK, color=color, ls='--', alpha=0.5)
-                    # Text offset slightly so they don't overlay
-                    ax.text(tc_mK + 0.3, ax.get_ylim()[0] + (ax.get_ylim()[1] - ax.get_ylim()[0])*0.05, 
-                            f"{tc_mK:.1f} mK", rotation=90, fontsize=9, color=color, fontweight='bold')
-                    
-                    summary_data.append({
-                        'Device': dev,
-                        'Current_A': run['current'],
-                        'Bext_uT': bext,
-                        'Direction': direction,
-                        'Tc_mK': tc_mK
-                    })
+                if aligned_tcs_list:
+                    print(f"  -> Bext = {bext:.1f} uT: Found Tcs = {', '.join(f'T{idx}={tc:.2f}' for idx, tc in aligned_tcs_list)} mK")
+                    for idx_t, tc_mK in aligned_tcs_list:
+                        summary_data.append({
+                            'Device': dev,
+                            'Current_A': run['current'],
+                            'Bext_uT': bext,
+                            'Direction': direction,
+                            'Transition_Idx': idx_t,
+                            'Tc_mK': tc_mK
+                        })
                 else:
                     print(f"  -> Bext = {bext:.1f} uT: No transition found")
                     
@@ -334,31 +349,74 @@ def analyze_field_dependence(date_str: str, data_root: pathlib.Path):
         df_sum.to_csv(csv_path, index=False)
         print(f"\nSaved CSV summary table to: {csv_path.name}")
         
-        # Create Tc vs Bext summary plot
-        fig, ax = plt.subplots(figsize=(8, 5.5), dpi=300)
+        # Create Tc vs Bext summary plot with multiple subpanels if there are multiple transitions
+        max_transitions = int(df_sum['Transition_Idx'].max()) if len(df_sum) > 0 else 1
         
+        if max_transitions > 1:
+            fig, axes = plt.subplots(max_transitions, 1, sharex=True, figsize=(8, 2.5 * max_transitions + 1.5), dpi=300)
+            if max_transitions == 1:
+                axes = [axes]
+        else:
+            fig, ax = plt.subplots(figsize=(8, 5.5), dpi=300)
+            axes = [ax]
+            
         plotted_any = False
-        for dev in df_sum['Device'].unique():
-            df_dev = df_sum[df_sum['Device'] == dev].sort_values('Bext_uT')
-            # Only plot if we have at least 2 points to make a line
-            if len(df_dev) >= 1:
-                plotted_any = True
-                dev_label = DEVICE_LABEL_MAP.get(dev, f"Device {dev}").split(":")[0]
-                ax.plot(df_dev['Bext_uT'], df_dev['Tc_mK'], 'o-', ms=6, lw=2, label=dev_label)
+        for t_idx in range(1, max_transitions + 1):
+            ax = axes[t_idx - 1]
+            
+            for dev in df_sum['Device'].unique():
+                df_dev_all = df_sum[df_sum['Device'] == dev]
+                df_dev = df_dev_all[df_dev_all['Transition_Idx'] == t_idx].sort_values('Bext_uT')
                 
-                # Print neat console summary
-                print(f"\n{dev_label} Summary:")
-                for _, r in df_dev.iterrows():
-                    print(f"  Bext = {r['Bext_uT']:5.1f} uT  |  Tc = {r['Tc_mK']:6.2f} mK")
+                if len(df_dev) >= 1:
+                    plotted_any = True
+                    dev_label = DEVICE_LABEL_MAP.get(dev, f"Device {dev}").split(":")[0]
+                    # Format legend labels to clearly show which transition it is
+                    label_str = f"{dev_label} ($T_{{c,{t_idx}}}$)" if max_transitions > 1 else dev_label
+                    
+                    marker_styles = ['o', 's', '^', 'D', 'v', 'p']
+                    line_styles = ['-', '--', ':', '-.']
+                    # Use matching colors from our sequential palette: Blue for T1, Teal for T2, Red for T3
+                    trans_colors = ["#1e40af", "#0d9488", "#dc2626"]
+                    t_color = trans_colors[(t_idx - 1) % len(trans_colors)]
+                    
+                    m_style = marker_styles[(t_idx - 1) % len(marker_styles)]
+                    l_style = line_styles[(t_idx - 1) % len(line_styles)]
+                    
+                    ax.plot(df_dev['Bext_uT'], df_dev['Tc_mK'], marker=m_style, linestyle=l_style, 
+                            color=t_color, ms=6, lw=2, label=label_str)
+                    
+                    # Print neat console summary
+                    print(f"\n{dev_label} Transition {t_idx} Summary:")
+                    for _, r in df_dev.iterrows():
+                        print(f"  Bext = {r['Bext_uT']:5.1f} uT  |  Tc = {r['Tc_mK']:6.2f} mK")
+            
+            ax.set_ylabel(f"$T_{{c,{t_idx}}}$ (mK)", fontweight='bold')
+            ax.grid(True, linestyle=':', alpha=0.6)
+            ax.legend(loc='best', framealpha=0.9, edgecolor='#e2e8f0', fontsize=10)
+            ax.margins(x=0.1, y=0.3)  # Add nice margins for good zoom levels
 
         if plotted_any:
-            ax.set_title("Superconducting Tc vs Applied External Magnetic Field", pad=12, fontweight='bold')
-            ax.set_xlabel("Applied External Field $B_{ext}$ (µT)")
-            ax.set_ylabel("Critical Temperature $T_c$ (mK)")
-            ax.grid(True, linestyle=':', alpha=0.6)
-            ax.legend(loc='best', framealpha=0.9, edgecolor='#e2e8f0')
+            axes[-1].set_xlabel("Applied External Field $B_{ext}$ (µT)", fontweight='bold')
             
-            plt.tight_layout()
+            # Add secondary x-axis for coil current at the top of the topmost subplot
+            ax_top = axes[0].secondary_xaxis('top', functions=(lambda x: x / SLOPE_UT_PER_A, lambda x: x * SLOPE_UT_PER_A))
+            ax_top.set_xlabel("Coil Current (A)", fontweight='bold', labelpad=8)
+            
+            # Place ticks at the exact measured currents
+            unique_currents = sorted(df_sum['Current_A'].unique())
+            ax_top.set_xticks(unique_currents)
+            ax_top.set_xticklabels([f"{c:.1f}" if c != int(c) else f"{int(c)}" for c in unique_currents])
+            
+            # Set a unified, premium suptitle with the coil constant
+            fig.suptitle("Superconducting Tc vs Applied External Magnetic Field\n(Coil Constant: 87.0 µT/A)", y=0.96, fontweight='bold', fontsize=13)
+            
+            # Adjust layout to leave room for the suptitle
+            if max_transitions > 1:
+                plt.tight_layout(rect=[0, 0, 1, 0.91])
+            else:
+                plt.tight_layout(rect=[0, 0, 1, 0.88])
+                
             summary_plot_path = output_dir / "Tc_vs_Bext_summary.png"
             fig.savefig(summary_plot_path, dpi=300)
             plt.close(fig)
@@ -377,7 +435,9 @@ if __name__ == "__main__":
                         help="Date folder to analyze (format: YYYYMMDD, default: today)")
     parser.add_argument("--data-dir", default="Data",
                         help="Path to the parent Data directory (default: 'Data')")
+    parser.add_argument("--apply-correction", action="store_true", default=False,
+                        help="Apply staircase noise correction (default: False)")
     args = parser.parse_args()
 
     data_path = pathlib.Path(args.data_dir)
-    analyze_field_dependence(args.date, data_path)
+    analyze_field_dependence(args.date, data_path, apply_correction=args.apply_correction)

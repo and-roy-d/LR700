@@ -49,27 +49,57 @@ os.environ.setdefault("NO_PROXY", "169.169.10.10,132.163.157.220,localhost,127.0
 # ---------------------------------------------------------------------------
 
 class BFTC:
-    def __init__(self, ip: str = "132.163.130.125:5001", timeout: float = 10.0):
+    def __init__(self, ip: str = "169.169.10.10:5001", timeout: float = 10.0):
         self.ip = ip
         self.timeout = timeout
+
+    def _sync_server_time(self, data: dict) -> None:
+        if isinstance(data, dict):
+            dt_str = data.get("datetime")
+            if dt_str and isinstance(dt_str, str):
+                try:
+                    clean_dt = dt_str.replace("Z", "+00:00")
+                    server_dt = datetime.fromisoformat(clean_dt)
+                    local_utc = datetime.now(timezone.utc)
+                    self._server_utc_offset = server_dt - local_utc
+                except Exception:
+                    pass
 
     def _post(self, endpoint: str, payload: dict) -> dict:
         url = f"http://{self.ip}/{endpoint}"
         r = requests.post(url, json=payload, timeout=self.timeout)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        self._sync_server_time(data)
+        return data
 
     def _get(self, endpoint: str) -> dict:
         url = f"http://{self.ip}/{endpoint}"
         r = requests.get(url, timeout=self.timeout)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        self._sync_server_time(data)
+        return data
 
     def _time_window(self, minutes_ago: float) -> tuple[str, str]:
-        now = datetime.now()
-        start = now - timedelta(minutes=minutes_ago)
+        offset = getattr(self, "_server_utc_offset", None)
+        if offset is not None:
+            server_now = datetime.now(timezone.utc) + offset
+        else:
+            try:
+                self._get("channel/measurement/latest")
+                offset = getattr(self, "_server_utc_offset", None)
+            except Exception:
+                pass
+            if offset is not None:
+                server_now = datetime.now(timezone.utc) + offset
+            else:
+                server_now = datetime.now(timezone.utc)
+
+        start = server_now - timedelta(minutes=minutes_ago)
+        stop = server_now + timedelta(minutes=10)
         fmt = "%Y-%m-%dT%H:%M:%S"
-        return start.strftime(fmt), now.strftime(fmt)
+        return start.strftime(fmt), stop.strftime(fmt)
 
     def get_temperature_history(self, channel: int, minutes: float = 2.0) -> list[float]:
         start_str, stop_str = self._time_window(minutes)
@@ -87,6 +117,12 @@ class BFTC:
             return []
 
     def get_temperature(self, channel: int, minutes: float = 2.0) -> float | None:
+        try:
+            latest = self._get("channel/measurement/latest")
+            if latest.get("channel_nr") == channel and latest.get("temperature") is not None:
+                return float(latest["temperature"])
+        except Exception:
+            pass
         history = self.get_temperature_history(channel, minutes)
         return history[-1] if history else None
 
@@ -203,7 +239,7 @@ class DataStore:
         self.still_reg_channel: int | None = None
 
         # BFTC Scanner IP
-        self.bftc_ip: str = "132.163.130.125:5001"
+        self.bftc_ip: str = "169.169.10.10:5001"
 
     def load_history_from_logs(self) -> None:
         """Pre-populate memory deques from existing CSV files within the 24h window."""
@@ -1948,8 +1984,8 @@ def build_app(bf: BFTC, channels: list[int], store: DataStore, interval: int):
 
 def main():
     parser = argparse.ArgumentParser(description="BFTC browser-based temperature monitor & regulator")
-    parser.add_argument("--ip", default="132.163.130.125:5001",
-                        help="BFTC IP:port  (default: 132.163.130.125:5001)")
+    parser.add_argument("--ip", default="169.169.10.10:5001",
+                        help="BFTC IP:port  (default: 169.169.10.10:5001)")
     parser.add_argument("--channels", nargs="+", type=int, default=[1, 2, 5, 6],
                         help="Channel numbers  (default: 1 2 5 6)")
     parser.add_argument("--interval", type=int, default=10,

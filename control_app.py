@@ -12,7 +12,7 @@ from ramp_controller import controller
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "bftc_workflow"))
 import bftc
 
-DEFAULT_LR700_PORT = "COM14" if sys.platform.startswith("win") else "/dev/ttyUSB0"
+DEFAULT_LR700_PORT = "COM11" if sys.platform.startswith("win") else "/dev/ttyUSB0"
 DEFAULT_LS370_PORT = "COM6" if sys.platform.startswith("win") else "/dev/ttyUSB1"
 
 # Define available data columns for the custom plot
@@ -191,7 +191,7 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
         # Myriad/Miniebit Settings
         html.Div(id='bluefors-settings', className="card", children=[
             html.H3("Myriad/Miniebit Settings"),
-            html.Div(className="input-group", children=[html.Label("IP Address"), dcc.Input(id='bf-ip', type='text', value='169.169.10.10:5001')]),
+            html.Div(className="input-group", children=[html.Label("IP Address"), dcc.Input(id='bf-ip', type='text', value='132.163.130.125:5001')]),
             html.Div(className="input-group", children=[
                 html.Label("Thermometer Source (Channel)"),
                 dcc.Dropdown(id='bf-source', 

@@ -99,7 +99,6 @@ python analysis/field_dependent_tc.py --date 20260522 # Run on an editable targe
 * **Current & Field Parsing**: Extracts the applied magnet current from file labels like `Coil0A1` (denoting `0.1` A, where `A` is the decimal point).
 * **Calibration**: Computes the external magnetic field $B_{ext}$ using a slope of **$87\text{ }\mu\text{T/A}$** ($B_{ext} = I \times 87$).
 * **Device Grouping**: Automatically clusters measurement sweeps by device (e.g. `F1`).
-* **Multi-Field Plotting**: Renders all curves for the same device on a single high-performance chart using the vibrant `plasma` color spectrum.
-* **Transition Finding & Marking**: Performs noise-filtering and gradient-based transition detection to locate $T_c$, drawing colored vertical dashed lines and labels.
-* **Summary Exports**: Produces a summary spreadsheet (`tc_vs_bext_summary.csv`) and a beautiful phase boundary plot (`Tc_vs_Bext_summary.png`) under the active date's `field_analysis/` folder.
-
+* **Multi-Field Plotting**: Renders all curves for the same device on a single high-performance chart using a high-contrast sequential color scheme (Royal Blue -> Teal -> Amber -> Crimson Red) as field increases, styled cleanly with thin lines connected to light, semi-transparent dots (`o-` style) with no distracting vertical lines or text labels to ensure premium visual excellence.
+* **Transition Alignment**: Automatically aligns detected transition temperatures for multi-layer devices (like `F1` and `A2`) to their closest nominal transition (83 mK, 110 mK, or 161 mK) to robustly track transitions across different fields while filtering out spurious noise.
+* **Three-Subpanel Summary Exports**: Produces a summary spreadsheet (`tc_vs_bext_summary.csv`) and a beautiful, high-precision summary plot (`Tc_vs_Bext_summary.png`) featuring **3 vertically stacked subpanels** (one for each transition) sharing the $B_{ext}$ X-axis so that each transition's field suppression is individually zoomed and clearly resolved.

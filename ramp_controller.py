@@ -62,6 +62,8 @@ class RampController:
             try:
                 target_func(**func_kwargs)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 self.log_message = f"Logger Error: {e}"
             finally:
                 self.log_state = "IDLE"
@@ -78,39 +80,47 @@ class RampController:
                 pass
             source_choice = str(ch)
 
+            lr700_gpib_val = int(kwargs.get('lr700_gpib', 17)) if kwargs.get('lr700_gpib') else 17
+
             self.log_thread = threading.Thread(
                 target=log_runner,
                 args=(bf_logger.main, {
                     "save_dir": save_dir, "device_name": prefix,
                     "temp_source_choice": source_choice,
-                    "logging_interval_s": interval,
+                    "logging_interval_s": float(interval) if interval else 1.0,
                     "stop_event": self.log_stop_event,
                     "lr700_adapter": kwargs.get('lr700_adapter', 'prologix'),
                     "lr700_port": kwargs.get('lr700_port', DEFAULT_LR700_PORT),
-                    "lr700_gpib": kwargs.get('lr700_gpib', 17),
+                    "lr700_gpib": lr700_gpib_val,
                     "bf_ip": kwargs.get('bf_ip'),
                 }),
                 daemon=True
             )
         else:
             import lakeshore_workflow.data_logger as ls_logger
+            ls_ch = int(kwargs.get('ls_channel', 5)) if kwargs.get('ls_channel') else 5
+            ls_baud = int(kwargs.get('ls_baudrate', 9600)) if kwargs.get('ls_baudrate') else 9600
+            ls_gpib = int(kwargs.get('ls_gpib')) if kwargs.get('ls_gpib') else None
+            lr700_gpib_val = int(kwargs.get('lr700_gpib', 17)) if kwargs.get('lr700_gpib') else 17
+            htr_res = float(kwargs.get('heater_resistance', 120.0)) if kwargs.get('heater_resistance') else 120.0
+
             self.log_thread = threading.Thread(
                 target=log_runner,
                 args=(ls_logger.main, {
                     "save_dir": save_dir, "device_name": prefix,
-                    "logging_interval_s": interval,
+                    "logging_interval_s": float(interval) if interval else 1.0,
                     "stop_event": self.log_stop_event,
                     "ls370_port": kwargs.get('ls_port', DEFAULT_LS370_PORT),
-                    "ls370_channel": kwargs.get('ls_channel', 5),
-                    "ls370_baudrate": kwargs.get('ls_baudrate', 9600),
-                    "ls370_gpib_address": kwargs.get('ls_gpib', None),
+                    "ls370_channel": ls_ch,
+                    "ls370_baudrate": ls_baud,
+                    "ls370_gpib_address": ls_gpib,
                     "lr700_adapter": kwargs.get('lr700_adapter', 'prologix'),
                     "lr700_port": kwargs.get('lr700_port', DEFAULT_LR700_PORT),
-                    "lr700_gpib_address": kwargs.get('lr700_gpib', 17),
+                    "lr700_gpib_address": lr700_gpib_val,
                     "log_bf_power": False,
                     "bf_ip": None,
                     "log_ls_open_loop_power": (instrument == "2120 OG"),
-                    "heater_resistance": kwargs.get('heater_resistance', 120.0),
+                    "heater_resistance": htr_res,
                 }),
                 daemon=True
             )

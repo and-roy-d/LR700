@@ -192,15 +192,18 @@ def main(
     bf_ip: str | None = None,
     log_ls_open_loop_power: bool = False,
     heater_resistance: float = 120.0,
+    **kwargs,
 ):
     if not save_dir:
         save_dir = ROOT_DIR / "Data" / datetime.datetime.now().strftime("%Y%m%d")
     else:
         save_dir = Path(save_dir)
+        if not save_dir.is_absolute():
+            save_dir = ROOT_DIR / save_dir
 
     if not os.path.exists(save_dir):
         print(f"Creating directory: {save_dir}")
-        os.makedirs(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     base_filename = "lr700log"

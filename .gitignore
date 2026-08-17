@@ -24,3 +24,6 @@ lakeshore_dash_*.log
 .gemini/
 .idea/
 .vscode/
+scratch/
+*.zip
+

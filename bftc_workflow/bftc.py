@@ -30,36 +30,66 @@ ALL_CHANNELS = (1, 2, 5, 6)
 class BFTC:
     """Thin wrapper around the Bluefors Temperature Controller REST API."""
 
-    def __init__(self, ip: str = "169.169.10.10:5001", timeout: float = 10.0):
+    def __init__(self, ip: str = "169.169.10.10:5001", timeout: float = 5.0):
         self.ip = ip
         self.timeout = timeout
+        self._server_utc_offset: Optional[timedelta] = None
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _sync_server_time(self, data: dict) -> None:
+        """Extract server datetime from response payload and update UTC offset."""
+        if isinstance(data, dict):
+            dt_str = data.get("datetime")
+            if dt_str and isinstance(dt_str, str):
+                try:
+                    clean_dt = dt_str.replace("Z", "+00:00")
+                    server_dt = datetime.fromisoformat(clean_dt)
+                    local_utc = datetime.now(timezone.utc)
+                    self._server_utc_offset = server_dt - local_utc
+                except Exception:
+                    pass
+
     def _post(self, endpoint: str, payload: dict) -> dict:
         url = f"http://{self.ip}/{endpoint}"
         r = requests.post(url, json=payload, timeout=self.timeout)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        self._sync_server_time(data)
+        return data
 
     def _get(self, endpoint: str) -> dict:
         url = f"http://{self.ip}/{endpoint}"
         r = requests.get(url, timeout=self.timeout)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        self._sync_server_time(data)
+        return data
 
     def _time_window(self, minutes_ago: float) -> tuple[str, str]:
-        """Return (start_time_str, stop_time_str) as local-time ISO strings.
+        """Return (start_time_str, stop_time_str) synchronized to the BFTC server clock.
 
-        The BFTC API accepts local wall-clock time with no timezone suffix.
-        We use datetime.now() directly — no offset arithmetic needed.
+        Includes a forward buffer on stop_time so query windows never truncate
+        incoming live data due to timezone differences or clock drift.
         """
-        now = datetime.now()
-        start = now - timedelta(minutes=minutes_ago)
+        if self._server_utc_offset is not None:
+            server_now = datetime.now(timezone.utc) + self._server_utc_offset
+        else:
+            try:
+                self._get("channel/measurement/latest")
+            except Exception:
+                pass
+            if self._server_utc_offset is not None:
+                server_now = datetime.now(timezone.utc) + self._server_utc_offset
+            else:
+                server_now = datetime.now(timezone.utc)
+
+        start = server_now - timedelta(minutes=minutes_ago)
+        stop = server_now + timedelta(minutes=10)
         fmt = "%Y-%m-%dT%H:%M:%S"
-        return start.strftime(fmt), now.strftime(fmt)
+        return start.strftime(fmt), stop.strftime(fmt)
 
     # ------------------------------------------------------------------
     # Channel (thermometer) control
@@ -104,6 +134,15 @@ class BFTC:
 
     def get_temperature(self, channel: int, minutes: float = 2.0) -> Optional[float]:
         """Return the most recent temperature (K) for *channel*, or None if unavailable."""
+        # 1. Fast path: check if latest measurement matches the requested channel
+        try:
+            latest = self._get("channel/measurement/latest")
+            if latest.get("channel_nr") == channel and latest.get("temperature") is not None:
+                return float(latest["temperature"])
+        except Exception:
+            pass
+
+        # 2. Historical query path
         history = self.get_temperature_history(channel, minutes)
         return history[-1] if history else None
 
