@@ -214,7 +214,24 @@ app.layout = html.Div(style={"display": "flex", "height": "100vh", "width": "100
                 html.Div(id='bf-solo-status', style={"marginTop": "4px", "color": "#f59e0b", "fontSize": "0.8em"})
             ]),
             html.Div(className="input-group", children=[html.Label("Target Temp (mK)"), dcc.Input(id='bf-target', type='number', value=10)]),
-            html.Div(className="input-group", children=[html.Label("Initial Power (uW)"), dcc.Input(id='bf-init-power', type='number', value=0)]),
+            # Initial power with 'Use current' checkbox (checked by default)
+            html.Div(style={"display": "flex", "gap": "8px", "alignItems": "flex-end", "marginBottom": "12px"}, children=[
+                html.Div(style={"flex": "1"}, children=[
+                    html.Label("Initial Power (uW)", style={"display": "block", "fontSize": "0.85em", "color": "#94a3b8", "marginBottom": "4px"}),
+                    dcc.Input(id='bf-init-power', type='number', value=0.0,
+                              style={"width": "100%", "padding": "8px", "borderRadius": "4px",
+                                     "border": "1px solid #475569", "backgroundColor": "#1e293b",
+                                     "color": "white", "boxSizing": "border-box"})
+                ]),
+                html.Div(style={"paddingBottom": "6px"}, children=[
+                    dcc.Checklist(
+                        id='bf-use-current-power',
+                        options=[{'label': ' Use current', 'value': 'use'}],
+                        value=['use'],
+                        style={"color": "#f8fafc", "fontSize": "0.8em", "whiteSpace": "nowrap"}
+                    )
+                ])
+            ]),
             html.Div(className="input-group", children=[html.Label("Power Step (uW)"), dcc.Input(id='bf-step', type='number', value=10)]),
             html.Div(className="input-group", children=[html.Label("Step Delay (s)"), dcc.Input(id='bf-delay', type='number', value=10)]),
             html.Div(className="input-group", children=[html.Label("Max Power Limit (uW)"), dcc.Input(id='bf-max-power', type='number', value=500)]),
@@ -596,6 +613,14 @@ def toggle_og_init_output_disabled(use_current):
     return bool(use_current and 'use' in use_current)
 
 @app.callback(
+    Output('bf-init-power', 'disabled'),
+    Input('bf-use-current-power', 'value')
+)
+def toggle_bf_init_power_disabled(use_current):
+    """Disable the Initial Power field when 'Use current' is checked."""
+    return bool(use_current and 'use' in use_current)
+
+@app.callback(
     Output('conn-status-text', 'children'),
     Input('btn-test-conn', 'n_clicks'),
     [State('instrument-dropdown', 'value'),
@@ -654,16 +679,20 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      Output('status-cmode', 'children'),
      Output('status-hrng', 'children'),
      Output('status-pid', 'children'),
-     Output('og-init-output', 'value')],
+     Output('og-init-output', 'value'),
+     Output('bf-init-power', 'value')],
     [Input('btn-start', 'n_clicks'),
      Input('btn-pause', 'n_clicks'),
      Input('btn-stop', 'n_clicks'),
      Input('btn-log-start', 'n_clicks'),
      Input('btn-log-stop', 'n_clicks'),
+     Input('btn-test-conn', 'n_clicks'),
+     Input('bf-use-current-power', 'value'),
      Input('interval-status', 'n_intervals')],
     [State('instrument-dropdown', 'value'),
      State('bf-ip', 'value'), State('bf-source', 'value'), State('bf-target', 'value'), State('bf-init-power', 'value'), 
      State('bf-step', 'value'), State('bf-delay', 'value'), State('bf-timeout', 'value'), State('bf-max-power', 'value'),
+     State('bf-use-current-power', 'value'),
      State('ls-port', 'value'), State('ls-baudrate', 'value'), State('ls-channel', 'value'), 
      State('ls-setpoint', 'value'), State('ls-rate', 'value'), State('ls-gpib', 'value'),
      State('lr700-adapter', 'value'), State('lr700-port', 'value'), State('lr700-gpib', 'value'),
@@ -678,8 +707,9 @@ def test_connection(n_clicks, instrument, bf_source, bf_ip, ls_port, ls_baudrate
      State('og-ramp-mode', 'value'), State('og-use-current-output', 'value'),
      State('og-ramp-rate', 'value'), State('og-kp', 'value'), State('og-ki', 'value')]
 )
-def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
+def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, test_conn_c, bf_use_power_c, n_int,
                     instrument, bf_ip, bf_source, bf_target, bf_init, bf_step, bf_delay, bf_timeout, bf_max,
+                    bf_use_current_power,
                     ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate, ls_gpib,
                     lr700_adapter, lr700_port, lr700_gpib,
                     log_dir, log_prefix, log_interval,
@@ -690,12 +720,39 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
                     og_ramp_mode, og_use_current_output, og_ramp_rate, og_kp, og_ki):
 
     ctx = callback_context
+    bf_use_curr_bool = bool(bf_use_current_power and 'use' in bf_use_current_power)
+
     if ctx.triggered:
         trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
         if trigger_id == 'btn-start':
             if instrument == 'Myriad/Miniebit':
-                controller.start_myriad(bf_ip, bf_source, bf_target*1e-3, bf_init*1e-6, bf_step*1e-6, bf_delay, bf_timeout, bf_max*1e-6)
+                # Check condition before ramp
+                if bf_use_curr_bool:
+                    try:
+                        from bftc_workflow.bftc import BFTC
+                        bf_client = BFTC(bf_ip) if bf_ip else BFTC()
+                        live_p_uW = bf_client.get_latest_heater_power_uW(heater_nr=4, minutes=5.0)
+                        if live_p_uW is None:
+                            live_p_uW = 0.0
+                        print(f"[Start Myriad] Read live heater power: {live_p_uW:.4g} uW")
+                    except Exception as e:
+                        print(f"[Start Myriad] Could not read live heater power, using field value: {e}")
+                        live_p_uW = float(bf_init) if bf_init is not None else 0.0
+                else:
+                    live_p_uW = float(bf_init) if bf_init is not None else 0.0
+
+                resolved_bf_init_power = round(live_p_uW, 4)
+
+                controller.start_myriad(
+                    bf_ip, bf_source,
+                    float(bf_target) * 1e-3,
+                    float(resolved_bf_init_power) * 1e-6,
+                    float(bf_step) * 1e-6,
+                    float(bf_delay),
+                    float(bf_timeout),
+                    float(bf_max) * 1e-6
+                )
             elif instrument == 'KPAC':
                 controller.start_kpac(
                     ls_port, ls_baudrate, ls_channel, ls_setpoint, ls_rate, gpib_address=ls_gpib,
@@ -797,6 +854,31 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
             
         elif trigger_id == 'btn-log-stop':
             controller.stop_logging()
+
+        elif trigger_id in ('btn-test-conn', 'bf-use-current-power'):
+            # Auto-populate current power when tested or toggled
+            if instrument == 'Myriad/Miniebit' and bf_use_curr_bool:
+                try:
+                    from bftc_workflow.bftc import BFTC
+                    bf_client = BFTC(bf_ip) if bf_ip else BFTC()
+                    live_p_uW = bf_client.get_latest_heater_power_uW(heater_nr=4, minutes=5.0)
+                    if live_p_uW is not None:
+                        resolved_bf_init_power = round(live_p_uW, 4)
+                        print(f"[Auto-populate Myriad Power] Fetched current power: {resolved_bf_init_power} uW")
+                except Exception as e:
+                    print(f"[Auto-populate Myriad Power] Error reading power: {e}")
+
+    # Check at the beginning of the script / initial load
+    if (not ctx.triggered or n_int == 0) and bf_use_curr_bool and instrument == 'Myriad/Miniebit':
+        if 'resolved_bf_init_power' not in dir():
+            try:
+                from bftc_workflow.bftc import BFTC
+                bf_client = BFTC(bf_ip) if bf_ip else BFTC()
+                live_p_uW = bf_client.get_latest_heater_power_uW(heater_nr=4, minutes=5.0)
+                if live_p_uW is not None:
+                    resolved_bf_init_power = round(live_p_uW, 4)
+            except Exception as e:
+                pass
  
     status = controller.get_status()
     temp_str = f"{status['current_temp']*1000:.2f} mK" if status['current_temp'] is not None else "-"
@@ -815,11 +897,12 @@ def handle_controls(start_c, pause_c, stop_c, log_start_c, log_stop_c, n_int,
     hrng_status = status.get('current_heater_range') if status.get('current_heater_range') else "-"
     pid_status = status.get('current_pid') if status.get('current_pid') else "-"
 
-    # Only push og-init-output update when we resolved a live MOUT value on Start
+    # Push updates when resolved
     init_out_update = resolved_init_output if 'resolved_init_output' in dir() else no_update
+    init_bf_power_update = resolved_bf_init_power if 'resolved_bf_init_power' in dir() else no_update
 
     return (status['state'], status['message'], temp_str, power_str, pause_btn_text,
-            log_status_text, cmode_status, hrng_status, pid_status, init_out_update)
+            log_status_text, cmode_status, hrng_status, pid_status, init_out_update, init_bf_power_update)
 
 def fetch_latest_data():
     try:
@@ -835,11 +918,13 @@ def fetch_latest_data():
     except Exception:
         return None
 
-def get_plot_color_array(num_points):
+def get_plot_marker_styling(num_points):
     num_highlight = min(5, num_points)
-    plot_color = '#3b82f6' # Blue
-    current_color = '#ef4444' # Red
-    return [plot_color] * (num_points - num_highlight) + [current_color] * num_highlight
+    old_color = '#ffff00'   # Neon Yellow
+    recent_color = '#ff0033' # Neon Red
+    colors = [old_color] * (num_points - num_highlight) + [recent_color] * num_highlight
+    sizes = [5] * (num_points - num_highlight) + [9] * num_highlight
+    return colors, sizes
 
 def process_axis_data(data, axis_key):
     if axis_key == 'time_local':
@@ -875,7 +960,7 @@ def update_plots(n, x_key, y_key):
         return go.Figure(layout={"template":"plotly_dark", "plot_bgcolor":"#1e293b", "paper_bgcolor":"#1e293b"})
 
     num_points = len(data["time_s"])
-    colors = get_plot_color_array(num_points)
+    colors, sizes = get_plot_marker_styling(num_points)
 
     # Custom Plot
     x_data = process_axis_data(data, x_key)
@@ -884,7 +969,7 @@ def update_plots(n, x_key, y_key):
     fig_custom = go.Figure()
     fig_custom.add_trace(go.Scatter(
         x=x_data, y=y_data, mode='markers',
-        marker=dict(size=4, color=colors)
+        marker=dict(size=sizes, color=colors)
     ))
     fig_custom.update_layout(
         margin=dict(l=50, r=20, t=20, b=50),

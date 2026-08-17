@@ -109,22 +109,14 @@ def organize_files_by_device(parent, device_labels, wait=0.2):
     parent = pathlib.Path(parent)
     pattern = re.compile(r'_(' + '|'.join(device_labels.keys()) + r')_')
 
-    def stable(p):
-        try:
-            s1 = p.stat().st_size
-            time.sleep(wait)
-            return s1 == p.stat().st_size
-        except Exception:
-            return False
-
     for f in parent.glob('*.npy'):
-        if not stable(f): continue
         m = pattern.search(f.name)
         if not m: continue
         d = parent / m.group(1)
         d.mkdir(exist_ok=True)
         try:
-            shutil.move(str(f), str(d / f.name))
+            # Use copy2 instead of move so active live logging files are not interrupted
+            shutil.copy2(str(f), str(d / f.name))
         except Exception:
             pass
 
@@ -142,11 +134,12 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 
     for device in device_labels:
         dev_dir = parent / device
-        if not dev_dir.is_dir():
-            continue
+        npy_files = list(dev_dir.glob('*.npy')) if dev_dir.is_dir() else []
+        if not npy_files:
+            npy_files = [f for f in parent.glob(f'*_{device}_*.npy') if f.is_file()]
 
-        for npy in dev_dir.glob('*.npy'):
-            print(f'Processing {npy.relative_to(parent)}')
+        for npy in npy_files:
+            print(f'Processing {npy.name} for {device}')
             data = np.load(npy, allow_pickle=True)
             t_raw = data['t_K']
             # If end temp > start temp, it's an UP ramp
@@ -312,7 +305,7 @@ def process_all_data(parent_folder, *, device_labels, apply_correction=True,
 if __name__ == "__main__":
     from datetime import datetime
 
-    date = "20260521"
+    date = "20260817"
     ruox_installed = True
     date_obj = datetime.strptime(date, "%Y%m%d")
     ruox_change_date = datetime.strptime("20250821", "%Y%m%d")
@@ -346,6 +339,24 @@ if __name__ == "__main__":
         'F2': f'F2: AA28 Au2 top: {filament_widths}',
     }
 
+    device_label_map_myriad_20260817 = {
+        # Board A
+        'A1': 'A1: AA36 Top Au1: 20,30,40 um',
+        'B1': 'B1: Tracer 23 30 um: Au1, Au2, Au3',
+        'C1': 'C1: AA36 Center Au1: 20,30,40 um',
+        'D1': 'D1: AA36 Outer Au1: 20,30,40 um',
+        'E1': 'E1: AA36 Middle Au1: 20,30,40 um',
+        'F1': 'F1: AA36 Bottom Au1 SGP: 20,30,40 um',
+
+        # Board B
+        'A2': 'A2: AA36 Bottom AuRCC SGP: 20,30,40 um',
+        'B2': 'B2: AA36 Middle AuRCC: 20,30,40 um',
+        'C2': 'C2: AA36 Outer AuRCC: 20,30,40 um',
+        'D2': 'D2: AA36 Center AuRCC: 20,30,40 um',
+        'E2': 'E2: RuOx',
+        'F2': 'F2: AA36 Top AuRCC: 20,30,40 um',
+    }
+
     device_label_map_myriad_reversed = {
         'A2': f'A1: Au1 top: {filament_widths}', 'A1': 'A2: Tracer 20A 0,2 0fil z073',
         'B2': 'B1: Tracer20A 0,0 0fil z073', 'B1': f'B2: Au1 middle: {filament_widths}',
@@ -364,9 +375,9 @@ if __name__ == "__main__":
         'F1': f'F1: AA25 0,3: Au1 (20 um), Au1Au2: {filament_widths}', 'F2': f'F2: Au1 top: {filament_widths}',
     }
 
-    device_label_map = device_label_map_myriad_20260520
+    device_label_map = device_label_map_myriad_20260817
 
-    if ruox_installed and (date_obj > ruox_change_date):
+    if ruox_installed and (date_obj > ruox_change_date) and ('E2' in device_label_map and device_label_map['E2'] == 'RuOx'):
         device_label_map['E2'] = 'E2: RuOx U09874'
 
     print("--- Running with Final Hybrid Transition Analysis ---")
